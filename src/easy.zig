@@ -127,36 +127,38 @@ pub const Response = struct {
         self.body.deinit();
     }
 
-    pub const Header = struct {
-        c_header: *c.struct_curl_header,
-        name: []const u8,
+    // Parse response header using `curl_easy_header` require libcurl >= 7.84.0.
+    // Find other solution to parse.
+    // pub const Header = struct {
+    //     c_header: *c.struct_curl_header,
+    //     name: []const u8,
 
-        /// Get gets the first value associated with the given key.
-        /// Applications need to copy the data if it wants to keep it around.
-        pub fn get(self: @This()) []const u8 {
-            return mem.sliceTo(self.c_header.value, 0);
-        }
-    };
+    //     /// Get gets the first value associated with the given key.
+    //     /// Applications need to copy the data if it wants to keep it around.
+    //     pub fn get(self: @This()) []const u8 {
+    //         return mem.sliceTo(self.c_header.value, 0);
+    //     }
+    // };
 
-    pub fn get_header(self: @This(), name: []const u8) !?Header {
-        const c_name = try fmt.allocPrintZ(self.allocator, "{s}", .{name});
-        defer self.allocator.free(c_name);
+    // pub fn get_header(self: @This(), name: []const u8) !?Header {
+    //     const c_name = try fmt.allocPrintZ(self.allocator, "{s}", .{name});
+    //     defer self.allocator.free(c_name);
 
-        var header: ?*c.struct_curl_header = null;
-        // https://curl.se/libcurl/c/curl_easy_header.html
-        const code = c.curl_easy_header(self.handle, name.ptr, 0, c.CURLH_HEADER, -1, &header);
+    //     var header: ?*c.struct_curl_header = null;
+    //     // https://curl.se/libcurl/c/curl_easy_header.html
+    //     const code = c.curl_easy_header(self.handle, name.ptr, 0, c.CURLH_HEADER, -1, &header);
 
-        // https://curl.se/libcurl/c/libcurl-errors.html
-        return switch (code) {
-            c.CURLHE_OK => .{
-                .c_header = header.?,
-                .name = name,
-            },
-            c.CURLHE_MISSING => null,
-            c.CURLHE_BADINDEX => error.BadIndex,
-            else => error.HeaderOther,
-        };
-    }
+    //     // https://curl.se/libcurl/c/libcurl-errors.html
+    //     return switch (code) {
+    //         c.CURLHE_OK => .{
+    //             .c_header = header.?,
+    //             .name = name,
+    //         },
+    //         c.CURLHE_MISSING => null,
+    //         c.CURLHE_BADINDEX => error.BadIndex,
+    //         else => error.HeaderOther,
+    //     };
+    // }
 };
 
 pub fn init(allocator: mem.Allocator) !Self {
@@ -165,7 +167,7 @@ pub fn init(allocator: mem.Allocator) !Self {
         return error.Init;
     }
 
-    return Self{
+    return .{
         .allocator = allocator,
         .handle = handle.?,
     };

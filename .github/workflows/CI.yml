@@ -29,7 +29,7 @@ jobs:
       - name: Install deps
         run: |
           sudo apt update && sudo apt install -y valgrind libcurl4-openssl-dev
-      - name: Run example
+      - name: Run examples
         run: zig build run-basic
       - name: Memory leak detect
         run: |
@@ -50,6 +50,6 @@ jobs:
       - uses: goto-bus-stop/setup-zig@v1
         with:
           version: master
-      - name: Build demo
+      - name: Run examples
         run: |
           zig build run-basic

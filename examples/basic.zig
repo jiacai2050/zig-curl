@@ -11,12 +11,13 @@ fn get(easy: Easy) !void {
         resp.status_code,
         resp.body.items,
     });
-    const date_header = try resp.get_header("date");
-    if (date_header) |h| {
-        std.debug.print("date header: {s}\n", .{h.get()});
-    } else {
-        std.debug.print("date header not found\n", .{});
-    }
+
+    // const date_header = try resp.get_header("date");
+    // if (date_header) |h| {
+    //     std.debug.print("date header: {s}\n", .{h.get()});
+    // } else {
+    //     std.debug.print("date header not found\n", .{});
+    // }
 }
 
 fn post(easy: Easy) !void {
