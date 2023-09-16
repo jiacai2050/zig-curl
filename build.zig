@@ -37,7 +37,8 @@ fn addExample(
 
     b.installArtifact(exe);
     exe.addModule(MODULE_NAME, curl_module);
-    exe.linkSystemLibrary("libcurl");
+    exe.linkSystemLibrary("curl");
+    exe.linkLibC();
 
     const run_step = b.step("run-" ++ name, std.fmt.comptimePrint("Run {s} example", .{name}));
     run_step.dependOn(&b.addRunArtifact(exe).step);

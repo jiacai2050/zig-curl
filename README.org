@@ -1,6 +1,6 @@
 #+TITLE: Zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2023-09-16T23:52:27+0800
+#+LASTMOD: 2023-09-17T00:39:46+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -30,7 +30,8 @@ const curl = b.dependency("curl", .{
 exe.addModule("curl", sqlite.module("curl"));
 // Note: since this package doesn't bundle static libcurl,
 // so users need to link to system-wide libcurl.
-exe.linkSystemLibrary("libcurl");
+exe.linkSystemLibrary("curl");
+exe.linkLibC();
 #+end_src
 
 * Usage
