@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '**.zig'
+      - '**.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - '**.zig'
+      - '**.yml'
+
+jobs:
+  test-linux:
+    timeout-minutes: 10
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v2
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: master
+      - name: Install deps
+        run: |
+          sudo apt update && sudo apt install -y valgrind libcurl4-openssl-dev
+      - name: Run example
+        run: zig build run-basic
+      - name: Memory leak detect
+        run: |
+          zig build -Dcpu=baseline --verbose
+          TEST_BINARY=./zig-out/bin/basic
+          valgrind --leak-check=full --tool=memcheck \
+          --show-leak-kinds=all --error-exitcode=1 ${TEST_BINARY}
+
+  test-macos:
+    timeout-minutes: 10
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest]
+    steps:
+      - uses: actions/checkout@v2
+      - uses: goto-bus-stop/setup-zig@v1
+        with:
+          version: master
+      - name: Build demo
+        run: |
+          zig build run-basic

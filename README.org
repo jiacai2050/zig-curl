@@ -1,0 +1,60 @@
+#+TITLE: Zig-curl
+#+DATE: 2023-09-16T23:16:15+0800
+#+LASTMOD: 2023-09-16T23:52:27+0800
+#+OPTIONS: toc:nil num:nil
+#+STARTUP: content
+
+[[https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml][https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml/badge.svg]]
+
+[[https://curl.haxx.se/libcurl/][libcurl]] bindings for Zig.
+
+* Installation
+First add this package to =build.zig.zon= of your project like this:
+#+begin_src zig
+.{
+    .dependencies = .{
+        .curl = .{
+            .url = "https://github.com/jiacai2050/zig-curl/archive/${COMMIT}.tar.gz",
+            .hash = "xxx",
+        },
+    },
+}
+#+end_src
+Then in your =build.zig=, access the module like this:
+#+begin_src zig
+const curl = b.dependency("curl", .{
+    .target = target,
+    .optimize = optimize,
+});
+
+exe.addModule("curl", sqlite.module("curl"));
+// Note: since this package doesn't bundle static libcurl,
+// so users need to link to system-wide libcurl.
+exe.linkSystemLibrary("libcurl");
+#+end_src
+
+* Usage
+#+begin_src zig
+const Easy = @import("curl").Easy;
+
+pub fn main() !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const easy = try Easy.init(allocator);
+    defer easy.deinit();
+
+    const resp = try easy.get("http://httpbin.org/anything");
+    defer resp.deinit();
+
+    std.debug.print("Status code: {d}\nBody: {s}\n", .{
+        resp.status_code,
+        resp.body.items,
+    });
+}
+#+end_src
+More usage can refer to [[file:examples/basic.zig][basic.zig]].
+* Roadmap
+- [ ] Currently only easy API is supported, support [[https://curl.se/libcurl/c/libcurl-multi.html][multi API]].
+- By default, this package will attempt to dynamically link to the system-wide libcurl and the system-wide SSL library.
