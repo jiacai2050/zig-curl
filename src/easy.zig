@@ -85,44 +85,48 @@ pub const RequestHeader = struct {
     }
 };
 
+pub const RequestArgs = struct {
+    method: Method = .GET,
+    header: ?RequestHeader = null,
+    verbose: bool = false,
+    /// Redirection limit, 0 refuse any redirect, -1 for an infinite number of redirects.
+    redirects: i32 = 10,
+    /// Max body size, default 128M.
+    max_body_size: usize = 128 * 1024 * 1024,
+};
+
 pub fn Request(comptime ReaderType: type) type {
     return struct {
         url: []const u8,
-        method: Method = .GET,
-        // body is io.Reader type
-        body: ?ReaderType = null,
-        header: ?RequestHeader = null,
-        verbose: bool = false,
-        /// Redirection limit, 0 refuse any redirect, -1 for an infinite number of redirects.
-        redirects: i32 = 10,
-        /// Max body size, default 128M.
-        max_body_size: usize = 128 * 1024 * 1024,
+        /// body is io.Reader or void
+        body: ReaderType,
+        args: RequestArgs,
+
+        pub fn init(url: []const u8, body: ReaderType, args: RequestArgs) @This() {
+            return .{
+                .url = url,
+                .body = body,
+                .args = args,
+            };
+        }
 
         pub fn deinit(self: *@This()) void {
-            if (self.header) |*h| {
+            if (self.args.header) |*h| {
                 h.deinit();
             }
         }
 
         fn getVerbose(self: @This()) c_long {
-            return if (self.verbose) 1 else 0;
+            return if (self.args.verbose) 1 else 0;
         }
 
         fn getBody(self: @This(), allocator: Allocator) !?[]u8 {
-            if (@TypeOf(self.body.?) == void) {
+            if (@TypeOf(self.body) == void) {
                 return null;
             }
 
-            return try self.body.?.readAllAlloc(allocator, self.max_body_size);
+            return try self.body.readAllAlloc(allocator, self.args.max_body_size);
         }
-    };
-}
-
-/// Request builds a Request object with given body and url.
-pub fn request(url: []const u8, body: anytype) Request(@TypeOf(body)) {
-    return .{
-        .url = url,
-        .body = body,
     };
 }
 
@@ -160,17 +164,16 @@ pub const Response = struct {
 
         var header: ?*c.struct_curl_header = null;
         const code = c.curl_easy_header(self.handle, name.ptr, 0, c.CURLH_HEADER, -1, &header);
-        return if (errors.headerErrorFrom(code)) |err| blk: {
-            break :blk switch (err) {
+        return if (errors.headerErrorFrom(code)) |err|
+            switch (err) {
                 error.Missing => null,
                 else => err,
-            };
-        } else blk: {
-            break :blk .{
+            }
+        else
+            Header{
                 .c_header = header.?,
                 .name = name,
             };
-        };
     }
 };
 
@@ -198,8 +201,8 @@ pub fn do(self: Self, req: anytype) !Response {
     defer self.allocator.free(url);
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_URL, url.ptr));
 
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, req.redirects)));
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, req.method.asString().ptr));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, req.args.redirects)));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, req.args.method.asString().ptr));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, req.getVerbose()));
 
     const body = try req.getBody(self.allocator);
@@ -213,7 +216,7 @@ pub fn do(self: Self, req: anytype) !Response {
     }
 
     var header: ?*c.struct_curl_slist = null;
-    if (req.header) |h| {
+    if (req.args.header) |h| {
         header = try h.asCHeader(self.default_user_agent);
     }
     defer if (header) |h| RequestHeader.freeCHeader(h);
@@ -240,7 +243,7 @@ pub fn do(self: Self, req: anytype) !Response {
 
 /// Get issues a GET to the specified URL.
 pub fn get(self: Self, url: []const u8) !Response {
-    var req = request(url, {});
+    var req = Request(void).init(url, {}, .{});
     defer req.deinit();
 
     return self.do(req);
@@ -248,8 +251,7 @@ pub fn get(self: Self, url: []const u8) !Response {
 
 /// Head issues a HEAD to the specified URL.
 pub fn head(self: Self, url: []const u8) !Response {
-    var req = request(url, {});
-    req.method = .HEAD;
+    var req = Request(void).init(url, {}, .{ .method = .HEAD });
     defer req.deinit();
 
     return self.do(req);
@@ -263,9 +265,10 @@ pub fn post(self: Self, url: []const u8, content_type: []const u8, body: anytype
         try h.add(HEADER_CONTENT_TYPE, content_type);
         break :blk h;
     };
-    var req = request(url, body);
-    req.method = .POST;
-    req.header = header;
+    var req = Request(@TypeOf(body)).init(url, body, .{
+        .method = .POST,
+        .header = header,
+    });
     defer req.deinit();
 
     return self.do(req);

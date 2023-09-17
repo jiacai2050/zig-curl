@@ -1,12 +1,12 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2023-09-17T13:16:41+0800
+#+LASTMOD: 2023-09-17T22:46:28+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
 [[https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml][https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml/badge.svg]]
 
-Zig bindings to [[https://curl.haxx.se/libcurl/][libcurl]], a [[https://curl.se/docs/copyright.html][free]] and easy-to-use client-side URL transfer library.
+Zig bindings to [[https://curl.haxx.se/libcurl/][libcurl]], a free and easy-to-use client-side URL transfer library.
 
 #+begin_quote
 This package is in its early stage, although the core functionality works right now, the API is still subject to changes.

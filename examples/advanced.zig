@@ -21,9 +21,10 @@ const Resposne = struct {
 };
 
 fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
-    var payload = std.io.fixedBufferStream(
-        \\{"name": "John", "age": 15}
+    var stream = std.io.fixedBufferStream(
+        \\ {"name": "John", "age": 15}
     );
+    var body = stream.reader();
 
     const header = blk: {
         var h = curl.RequestHeader.init(allocator);
@@ -33,12 +34,10 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
         try h.add("Authorization", "Basic YWxhZGRpbjpvcGVuc2VzYW1l");
         break :blk h;
     };
-    var req = curl.request(
-        "http://httpbin.org/anything/zig-curl",
-        payload.reader(),
-    );
-    req.method = .PUT;
-    req.header = header;
+    var req = curl.Request(@TypeOf(body)).init("http://httpbin.org/anything/zig-curl", body, .{
+        .method = .PUT,
+        .header = header,
+    });
     defer req.deinit();
 
     const resp = try easy.do(req);
