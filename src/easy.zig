@@ -4,7 +4,7 @@ const std = @import("std");
 const mem = std.mem;
 const fmt = std.fmt;
 
-const has_curl_header = @import("c.zig").has_curl_header;
+const has_curl_header = @import("c.zig").has_curl_header_support;
 const polyfill_struct_curl_header = @import("c.zig").polyfill_struct_curl_header;
 
 const Allocator = mem.Allocator;
@@ -15,7 +15,7 @@ handle: *c.CURL,
 /// The maximum time in milliseconds that the entire transfer operation to take.
 timeout_ms: usize = 30_000,
 
-const HEADER_CONTENT_TYPE: []const u8 = "Content-Type";
+pub const HEADER_CONTENT_TYPE: []const u8 = "Content-Type";
 
 pub const Method = enum {
     GET,
@@ -105,7 +105,8 @@ pub fn Request(comptime ReaderType: type) type {
     };
 }
 
-pub fn request(body: anytype, url: []const u8) Request(@TypeOf(body)) {
+/// Request builds a Request object with given body and url.
+pub fn request(url: []const u8, body: anytype) Request(@TypeOf(body)) {
     return .{
         .url = url,
         .body = body,
@@ -128,13 +129,14 @@ pub const Response = struct {
         c_header: polyfill_struct_curl_header(),
         name: []const u8,
 
-        /// Get gets the first value associated with the given key.
+        /// Get the first value associated with the given key.
         /// Applications need to copy the data if it wants to keep it around.
         pub fn get(self: @This()) []const u8 {
             return mem.sliceTo(self.c_header.value, 0);
         }
     };
 
+    /// Gets the header associated with the given name.
     pub fn get_header(self: @This(), name: []const u8) errors.HeaderError!?Header {
         if (comptime !has_curl_header()) {
             return error.NoCurlHeaderSupport;
@@ -144,7 +146,6 @@ pub const Response = struct {
         defer self.allocator.free(c_name);
 
         var header: ?*c.struct_curl_header = null;
-        // https://curl.se/libcurl/c/curl_easy_header.html
         const code = c.curl_easy_header(self.handle, name.ptr, 0, c.CURLH_HEADER, -1, &header);
         return if (errors.headerErrorFrom(code)) |err| blk: {
             break :blk switch (err) {
@@ -226,7 +227,7 @@ pub fn do(self: Self, req: anytype) !Response {
 
 /// Get issues a GET to the specified URL.
 pub fn get(self: Self, url: []const u8) !Response {
-    var req = request({}, url);
+    var req = request(url, {});
     defer req.deinit();
 
     return self.do(req);
@@ -234,7 +235,7 @@ pub fn get(self: Self, url: []const u8) !Response {
 
 /// Head issues a HEAD to the specified URL.
 pub fn head(self: Self, url: []const u8) !Response {
-    var req = request({}, url);
+    var req = request(url, {});
     req.method = .HEAD;
     defer req.deinit();
 
@@ -249,7 +250,7 @@ pub fn post(self: Self, url: []const u8, content_type: []const u8, body: anytype
         try h.add(HEADER_CONTENT_TYPE, content_type);
         break :blk h;
     };
-    var req = request(body, url);
+    var req = request(url, body);
     req.method = .POST;
     req.header = header;
     defer req.deinit();

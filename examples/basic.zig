@@ -12,13 +12,6 @@ fn get(easy: Easy) !void {
         resp.status_code,
         resp.body.items,
     });
-
-    const date_header = try resp.get_header("date");
-    if (date_header) |h| {
-        std.debug.print("date header: {s}\n", .{h.get()});
-    } else {
-        std.debug.print("date header not found\n", .{});
-    }
 }
 
 fn post(easy: Easy) !void {
@@ -42,13 +35,9 @@ pub fn main() !void {
     const easy = try Easy.init(allocator);
     defer easy.deinit();
 
-    curl.print_libcurl_version();
-
     const sep = "-" ** 20;
     std.debug.print("{s}GET demo{s}\n", .{ sep, sep });
-    get(easy) catch |e| {
-        std.debug.print("Get demo failed, error:{any}\n", .{e});
-    };
+    try get(easy);
 
     std.debug.print("{s}POST demo{s}\n", .{ sep, sep });
     try post(easy);

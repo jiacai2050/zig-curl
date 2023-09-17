@@ -22,7 +22,7 @@ jobs:
       matrix:
         os: [ubuntu-latest]
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - uses: goto-bus-stop/setup-zig@v2
         with:
           version: master
@@ -30,13 +30,17 @@ jobs:
         run: |
           sudo apt update && sudo apt install -y valgrind libcurl4-openssl-dev
       - name: Run examples
-        run: zig build run-basic
+        run: |
+          make run-examples
       - name: Memory leak detect
         run: |
           zig build -Dcpu=baseline --verbose
-          TEST_BINARY=./zig-out/bin/basic
-          valgrind --leak-check=full --tool=memcheck \
-          --show-leak-kinds=all --error-exitcode=1 ${TEST_BINARY}
+
+          BINS=("./zig-out/bin/basic" "./zig-out/bin/advanced")
+          for bin in ${BINS[@]}; do
+            valgrind --leak-check=full --tool=memcheck \
+            --show-leak-kinds=all --error-exitcode=1 ${bin}
+          done
 
   test-macos:
     timeout-minutes: 10
@@ -46,10 +50,10 @@ jobs:
       matrix:
         os: [macos-latest]
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - uses: goto-bus-stop/setup-zig@v1
         with:
           version: master
       - name: Run examples
         run: |
-          zig build run-basic
+          make run-examples

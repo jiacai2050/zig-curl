@@ -14,3 +14,4 @@ docgen_tmp/
 
 .vagrant
 Vagrantfile
+zig-linux*

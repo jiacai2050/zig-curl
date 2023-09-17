@@ -12,6 +12,7 @@ pub fn build(b: *std.Build) void {
     });
 
     try addExample(b, "basic", module, target);
+    try addExample(b, "advanced", module, target);
 
     const main_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/main.zig" },
