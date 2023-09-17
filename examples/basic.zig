@@ -1,7 +1,8 @@
 const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
-const Easy = @import("curl").Easy;
+const curl = @import("curl");
+const Easy = curl.Easy;
 
 fn get(easy: Easy) !void {
     const resp = try easy.get("http://httpbin.org/anything");
@@ -12,17 +13,17 @@ fn get(easy: Easy) !void {
         resp.body.items,
     });
 
-    // const date_header = try resp.get_header("date");
-    // if (date_header) |h| {
-    //     std.debug.print("date header: {s}\n", .{h.get()});
-    // } else {
-    //     std.debug.print("date header not found\n", .{});
-    // }
+    const date_header = try resp.get_header("date");
+    if (date_header) |h| {
+        std.debug.print("date header: {s}\n", .{h.get()});
+    } else {
+        std.debug.print("date header not found\n", .{});
+    }
 }
 
 fn post(easy: Easy) !void {
     var payload = std.io.fixedBufferStream(
-        \\\ {"name": "John", "age": 15}
+        \\{"name": "John", "age": 15}
     );
     const resp = try easy.post("http://httpbin.org/anything", "application/json", payload.reader());
     defer resp.deinit();
@@ -41,8 +42,14 @@ pub fn main() !void {
     const easy = try Easy.init(allocator);
     defer easy.deinit();
 
-    std.debug.print("-----------GET demo\n", .{});
-    try get(easy);
-    std.debug.print("-----------POST demo\n", .{});
+    curl.print_libcurl_version();
+
+    const sep = "-" ** 20;
+    std.debug.print("{s}GET demo{s}\n", .{ sep, sep });
+    get(easy) catch |e| {
+        std.debug.print("Get demo failed, error:{any}\n", .{e});
+    };
+
+    std.debug.print("{s}POST demo{s}\n", .{ sep, sep });
     try post(easy);
 }

@@ -1,15 +1,16 @@
-const c = @cImport({
-    @cInclude("curl/curl.h");
-});
+const c = @import("c.zig").c;
+const errors = @import("errors.zig");
 const std = @import("std");
 const mem = std.mem;
 const fmt = std.fmt;
 
-const testing = std.testing;
+const has_curl_header = @import("c.zig").has_curl_header;
+const polyfill_struct_curl_header = @import("c.zig").polyfill_struct_curl_header;
 
+const Allocator = mem.Allocator;
 const Self = @This();
 
-allocator: mem.Allocator,
+allocator: Allocator,
 handle: *c.CURL,
 /// The maximum time in milliseconds that the entire transfer operation to take.
 timeout_ms: usize = 30_000,
@@ -31,9 +32,9 @@ pub const Method = enum {
 
 pub const RequestHeader = struct {
     entries: std.StringHashMap([]const u8),
-    allocator: mem.Allocator,
+    allocator: Allocator,
 
-    pub fn init(allocator: mem.Allocator) @This() {
+    pub fn init(allocator: Allocator) @This() {
         return .{
             .entries = std.StringHashMap([]const u8).init(allocator),
             .allocator = allocator,
@@ -48,7 +49,7 @@ pub const RequestHeader = struct {
         try self.entries.put(k, v);
     }
 
-    /// Users should be free returned list (after usage) with `freeCHeader`.
+    // Note: Caller should free returned list (after usage) with `freeCHeader`.
     fn asCHeader(self: @This()) !?*c.struct_curl_slist {
         if (self.entries.count() == 0) {
             return null;
@@ -94,11 +95,7 @@ pub fn Request(comptime ReaderType: type) type {
             return if (self.verbose) 1 else 0;
         }
 
-        fn getBody(self: @This(), allocator: mem.Allocator) !?[]u8 {
-            if (self.body == null) {
-                return null;
-            }
-
+        fn getBody(self: @This(), allocator: Allocator) !?[]u8 {
             if (@TypeOf(self.body.?) == void) {
                 return null;
             }
@@ -121,47 +118,49 @@ pub const Response = struct {
     status_code: i32,
 
     handle: *c.CURL,
-    allocator: mem.Allocator,
+    allocator: Allocator,
 
     pub fn deinit(self: @This()) void {
         self.body.deinit();
     }
 
-    // Parse response header using `curl_easy_header` require libcurl >= 7.84.0.
-    // Find other solution to parse.
-    // pub const Header = struct {
-    //     c_header: *c.struct_curl_header,
-    //     name: []const u8,
+    pub const Header = struct {
+        c_header: polyfill_struct_curl_header(),
+        name: []const u8,
 
-    //     /// Get gets the first value associated with the given key.
-    //     /// Applications need to copy the data if it wants to keep it around.
-    //     pub fn get(self: @This()) []const u8 {
-    //         return mem.sliceTo(self.c_header.value, 0);
-    //     }
-    // };
+        /// Get gets the first value associated with the given key.
+        /// Applications need to copy the data if it wants to keep it around.
+        pub fn get(self: @This()) []const u8 {
+            return mem.sliceTo(self.c_header.value, 0);
+        }
+    };
 
-    // pub fn get_header(self: @This(), name: []const u8) !?Header {
-    //     const c_name = try fmt.allocPrintZ(self.allocator, "{s}", .{name});
-    //     defer self.allocator.free(c_name);
+    pub fn get_header(self: @This(), name: []const u8) errors.HeaderError!?Header {
+        if (comptime !has_curl_header()) {
+            return error.NoCurlHeaderSupport;
+        }
 
-    //     var header: ?*c.struct_curl_header = null;
-    //     // https://curl.se/libcurl/c/curl_easy_header.html
-    //     const code = c.curl_easy_header(self.handle, name.ptr, 0, c.CURLH_HEADER, -1, &header);
+        const c_name = try fmt.allocPrintZ(self.allocator, "{s}", .{name});
+        defer self.allocator.free(c_name);
 
-    //     // https://curl.se/libcurl/c/libcurl-errors.html
-    //     return switch (code) {
-    //         c.CURLHE_OK => .{
-    //             .c_header = header.?,
-    //             .name = name,
-    //         },
-    //         c.CURLHE_MISSING => null,
-    //         c.CURLHE_BADINDEX => error.BadIndex,
-    //         else => error.HeaderOther,
-    //     };
-    // }
+        var header: ?*c.struct_curl_header = null;
+        // https://curl.se/libcurl/c/curl_easy_header.html
+        const code = c.curl_easy_header(self.handle, name.ptr, 0, c.CURLH_HEADER, -1, &header);
+        return if (errors.headerErrorFrom(code)) |err| blk: {
+            break :blk switch (err) {
+                error.Missing => null,
+                else => err,
+            };
+        } else blk: {
+            break :blk .{
+                .c_header = header.?,
+                .name = name,
+            };
+        };
+    }
 };
 
-pub fn init(allocator: mem.Allocator) !Self {
+pub fn init(allocator: Allocator) !Self {
     const handle = c.curl_easy_init();
     if (handle == null) {
         return error.Init;
