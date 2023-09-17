@@ -4,7 +4,7 @@ const std = @import("std");
 const mem = std.mem;
 const fmt = std.fmt;
 
-const has_curl_header = @import("c.zig").has_curl_header_support;
+const has_curl_header = @import("c.zig").has_parse_header_support;
 const polyfill_struct_curl_header = @import("c.zig").polyfill_struct_curl_header;
 
 const Allocator = mem.Allocator;
@@ -14,8 +14,10 @@ allocator: Allocator,
 handle: *c.CURL,
 /// The maximum time in milliseconds that the entire transfer operation to take.
 timeout_ms: usize = 30_000,
+default_user_agent: []const u8 = "zig-curl/0.1.0",
 
 pub const HEADER_CONTENT_TYPE: []const u8 = "Content-Type";
+pub const HEADER_USER_AGENT: []const u8 = "User-Agent";
 
 pub const Method = enum {
     GET,
@@ -50,15 +52,26 @@ pub const RequestHeader = struct {
     }
 
     // Note: Caller should free returned list (after usage) with `freeCHeader`.
-    fn asCHeader(self: @This()) !?*c.struct_curl_slist {
+    fn asCHeader(self: @This(), ua: []const u8) !?*c.struct_curl_slist {
         if (self.entries.count() == 0) {
             return null;
         }
 
         var lst: ?*c.struct_curl_slist = null;
         var it = self.entries.iterator();
+        var has_ua = false;
         while (it.next()) |entry| {
+            if (!has_ua and std.ascii.eqlIgnoreCase(entry.key_ptr.*, HEADER_USER_AGENT)) {
+                has_ua = true;
+            }
+
             const kv = try fmt.allocPrintZ(self.allocator, "{s}: {s}", .{ entry.key_ptr.*, entry.value_ptr.* });
+            defer self.allocator.free(kv);
+
+            lst = c.curl_slist_append(lst, kv);
+        }
+        if (!has_ua) {
+            const kv = try fmt.allocPrintZ(self.allocator, "{s}: {s}", .{ HEADER_USER_AGENT, ua });
             defer self.allocator.free(kv);
 
             lst = c.curl_slist_append(lst, kv);
@@ -201,7 +214,7 @@ pub fn do(self: Self, req: anytype) !Response {
 
     var header: ?*c.struct_curl_slist = null;
     if (req.header) |h| {
-        header = try h.asCHeader();
+        header = try h.asCHeader(self.default_user_agent);
     }
     defer if (header) |h| RequestHeader.freeCHeader(h);
 

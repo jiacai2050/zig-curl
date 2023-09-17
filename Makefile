@@ -1,4 +1,4 @@
 
 run-examples:
-	zig build run-basic
-	zig build run-advanced
+	zig build run-basic -freference-trace
+	zig build run-advanced -freference-trace

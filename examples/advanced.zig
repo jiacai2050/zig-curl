@@ -1,8 +1,24 @@
 const std = @import("std");
+const println = @import("util.zig").println;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const curl = @import("curl");
 const Easy = curl.Easy;
+
+const UA = "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0";
+
+const Resposne = struct {
+    headers: struct {
+        @"User-Agent": []const u8,
+        Authorization: []const u8,
+    },
+    json: struct {
+        name: []const u8,
+        age: usize,
+    },
+    method: []const u8,
+    url: []const u8,
+};
 
 fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     var payload = std.io.fixedBufferStream(
@@ -13,11 +29,12 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
         var h = curl.RequestHeader.init(allocator);
         errdefer h.deinit();
         try h.add(curl.HEADER_CONTENT_TYPE, "application/json");
-        try h.add("User-Agent", "zig-curl/0.1.0");
+        try h.add("user-agent", UA);
+        try h.add("Authorization", "Basic YWxhZGRpbjpvcGVuc2VzYW1l");
         break :blk h;
     };
     var req = curl.request(
-        "http://httpbin.org/anything",
+        "http://httpbin.org/anything/zig-curl",
         payload.reader(),
     );
     req.method = .PUT;
@@ -32,7 +49,28 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
         resp.body.items,
     });
 
-    if (!curl.has_curl_header_support()) {
+    const parsed = try std.json.parseFromSlice(Resposne, allocator, resp.body.items, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expectEqualDeep(
+        parsed.value,
+        .{
+            .headers = .{
+                .@"User-Agent" = UA,
+                .Authorization = "Basic YWxhZGRpbjpvcGVuc2VzYW1l",
+            },
+            .json = .{
+                .name = "John",
+                .age = 15,
+            },
+            .method = "PUT",
+            .url = "http://httpbin.org/anything/zig-curl",
+        },
+    );
+
+    if (!curl.has_parse_header_support()) {
         return;
     }
     // Get response header `date`.
@@ -45,16 +83,15 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
 }
 
 pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) @panic("leak");
+    var allocator = gpa.allocator();
 
     const easy = try Easy.init(allocator);
     defer easy.deinit();
 
     curl.print_libcurl_version();
 
-    const sep = "-" ** 20;
-    std.debug.print("{s}PUT with custom header demo{s}\n", .{ sep, sep });
+    println("PUT with custom header demo");
     try put_with_custom_header(allocator, easy);
 }

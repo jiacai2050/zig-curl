@@ -1,4 +1,5 @@
 const std = @import("std");
+const println = @import("util.zig").println;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const curl = @import("curl");
@@ -28,17 +29,16 @@ fn post(easy: Easy) !void {
 }
 
 pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) @panic("leak");
+    var allocator = gpa.allocator();
 
     const easy = try Easy.init(allocator);
     defer easy.deinit();
 
-    const sep = "-" ** 20;
-    std.debug.print("{s}GET demo{s}\n", .{ sep, sep });
+    println("GET demo");
     try get(easy);
 
-    std.debug.print("{s}POST demo{s}\n", .{ sep, sep });
+    println("POST demo");
     try post(easy);
 }
