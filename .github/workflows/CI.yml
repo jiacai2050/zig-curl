@@ -33,6 +33,8 @@ jobs:
         run: |
           make run-examples
       - name: Memory leak detect
+        # Wait https://github.com/ziglang/zig/issues/15547
+        if: false
         run: |
           zig build -Dcpu=baseline --verbose
 
