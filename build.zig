@@ -18,6 +18,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = .{ .path = "src/main.zig" },
         .target = target,
     });
+    main_tests.addModule(MODULE_NAME, module);
+    main_tests.linkSystemLibrary("curl");
+    main_tests.linkLibC();
 
     const run_main_tests = b.addRunArtifact(main_tests);
     const test_step = b.step("test", "Run library tests");

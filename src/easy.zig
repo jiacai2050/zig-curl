@@ -179,6 +179,49 @@ pub const Response = struct {
     }
 };
 
+pub const MultiPart = struct {
+    mime_handle: *c.curl_mime,
+    allocator: Allocator,
+
+    pub const DataSource = union(enum) {
+        memory: []const u8,
+        file: []const u8,
+        // read_callback :
+    };
+
+    pub fn init(allocator: Allocator, handle: *c.CURL) !@This() {
+        return if (c.curl_mime_init(handle)) |h|
+            .{
+                .allocator = allocator,
+                .mime_handle = h,
+            }
+        else
+            error.MimeInit;
+    }
+
+    pub fn deinit(self: @This()) void {
+        c.curl_mime_free(self.mime_handle);
+    }
+
+    pub fn add_part(self: @This(), name: []const u8, source: DataSource) !void {
+        const part = if (c.curl_mime_addpart(self.mime_handle)) |part| part else return error.MimeAddPart;
+
+        const namez = try std.fmt.allocPrintZ(self.allocator, "{s}", name);
+        defer self.allocator.free(namez);
+        c.curl_mime_name(part, namez);
+        switch (source) {
+            .memory => |slice| {
+                try checkCode(c.curl_mime_data(part, slice.ptr, @as(i64, slice.len)));
+            },
+            .file => |filepath| {
+                const filepathz = try std.fmt.allocPrintZ(self.allocator, "{s}", filepath);
+
+                try checkCode(c.curl_mime_filedata(part, filepathz));
+            },
+        }
+    }
+};
+
 pub fn init(allocator: Allocator) !Self {
     const handle = c.curl_easy_init();
     if (handle == null) {

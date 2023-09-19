@@ -59,3 +59,26 @@ pub fn has_parse_header_support() bool {
     // https://curl.se/libcurl/c/curl_easy_header.html
     return c.CURL_AT_LEAST_VERSION(7, 84, 0);
 }
+
+pub fn url_encode(string: []const u8) ?[]const u8 {
+    const r = c.curl_easy_escape(null, string.ptr, @intCast(string.len));
+    return std.mem.sliceTo(r.?, 0);
+}
+
+test "url encode" {
+    inline for (.{
+        .{
+            "https://github.com/",
+            "https%3A%2F%2Fgithub.com%2F",
+        },
+        .{
+            "https://httpbin.org/anything/你好",
+            "https%3A%2F%2Fhttpbin.org%2Fanything%2F%E4%BD%A0%E5%A5%BD",
+        },
+    }) |case| {
+        const input = case.@"0";
+        const expected = case.@"1";
+        const actual = url_encode(input);
+        try std.testing.expectEqualStrings(expected, actual.?);
+    }
+}
