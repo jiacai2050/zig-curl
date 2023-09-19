@@ -1,13 +1,15 @@
 const c = @import("c.zig").c;
-const errors = @import("errors.zig");
 const std = @import("std");
+const errors = @import("errors.zig");
+
 const mem = std.mem;
 const fmt = std.fmt;
+const Allocator = mem.Allocator;
+const checkCode = errors.checkCode;
 
 const has_curl_header = @import("c.zig").has_parse_header_support;
 const polyfill_struct_curl_header = @import("c.zig").polyfill_struct_curl_header;
 
-const Allocator = mem.Allocator;
 const Self = @This();
 
 allocator: Allocator,
@@ -284,17 +286,6 @@ fn write_callback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyo
     buffer.appendSlice(typed_data[0..real_size]) catch return 0;
 
     return real_size;
-}
-
-fn checkCode(code: c.CURLcode) !void {
-    if (code == c.CURLE_OK) {
-        return;
-    }
-
-    // https://curl.se/libcurl/c/libcurl-errors.html
-    std.log.debug("curl err code:{d}, msg:{s}\n", .{ code, c.curl_easy_strerror(code) });
-
-    return error.Unepxected;
 }
 
 fn set_common_opts(self: Self) !void {

@@ -1,3 +1,4 @@
+const std = @import("std");
 const c = @import("c.zig").c;
 const assert = @import("std").debug.assert;
 
@@ -28,4 +29,15 @@ pub fn headerErrorFrom(code: c.CURLHcode) ?HeaderError {
         c.CURLHE_NOT_BUILT_IN => error.NotBuiltIn,
         else => error.UnknownHeaderError,
     };
+}
+
+pub fn checkCode(code: c.CURLcode) !void {
+    if (code == c.CURLE_OK) {
+        return;
+    }
+
+    // https://curl.se/libcurl/c/libcurl-errors.html
+    std.log.debug("curl err code:{d}, msg:{s}\n", .{ code, c.curl_easy_strerror(code) });
+
+    return error.Unepxected;
 }

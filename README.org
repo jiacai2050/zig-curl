@@ -1,6 +1,6 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2023-09-17T22:46:28+0800
+#+LASTMOD: 2023-09-19T08:30:18+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -46,18 +46,25 @@ First add this package to =build.zig.zon= of your project like this:
     .dependencies = .{
         .curl = .{
             .url = "https://github.com/jiacai2050/zig-curl/archive/${COMMIT}.tar.gz",
-            .hash = "xxx",
+            .hash = "${HASH}",
         },
     },
 }
 #+end_src
+Replace =${COMMIT}= with a real one, =.hash= field is difficult to get now, you can fill in a fake one like =1220b5dafa54081ce54f108d0b7fa9451149bde7dc7c20f4e14e322fdeeb7a1dfd9d=, then run =zig build=, it should throw following similar error:
+#+begin_example
+Fetch Packages [1/1] curl... /Users/jiacai/playground/zig-demo/build.zig.zon:7:21: error: hash mismatch: expected: 1220b5dafa54081ce54f108d0b7fa9451149bde7dc7c20f4e14e322fdeeb7a1dfd9d, found: 122079741f4df43f426c87585058123be0e0fa3fda3985d9d88341d3d03f8484e105
+            .hash = "1220b5dafa54081ce54f108d0b7fa9451149bde7dc7c20f4e14e322fdeeb7a1dfd9d",
+                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#+end_example
+
+The =found:= section output the real hash, copy that to =build.zig.zon=.
+
 Then in your =build.zig=, access the module like this:
 #+begin_src zig
-const curl = b.dependency("curl", .{
-    .target = target,
-    .optimize = optimize,
-});
+const curl = b.dependency("curl", .{});
 
+// add curl module to an executable.
 exe.addModule("curl", curl.module("curl"));
 // Note: since this package doesn't bundle static libcurl,
 // so users need to link to system-wide libcurl.
