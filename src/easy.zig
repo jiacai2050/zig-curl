@@ -7,8 +7,7 @@ const fmt = std.fmt;
 const Allocator = mem.Allocator;
 const checkCode = errors.checkCode;
 
-const has_curl_header = @import("c.zig").has_parse_header_support;
-const polyfill_struct_curl_header = @import("c.zig").polyfill_struct_curl_header;
+const has_parse_header_support = @import("c.zig").has_parse_header_support;
 
 const Self = @This();
 
@@ -90,6 +89,7 @@ pub const RequestHeader = struct {
 pub const RequestArgs = struct {
     method: Method = .GET,
     header: ?RequestHeader = null,
+    multi_part: ?MultiPart = null,
     verbose: bool = false,
     /// Redirection limit, 0 refuse any redirect, -1 for an infinite number of redirects.
     redirects: i32 = 10,
@@ -115,6 +115,9 @@ pub fn Request(comptime ReaderType: type) type {
         pub fn deinit(self: *@This()) void {
             if (self.args.header) |*h| {
                 h.deinit();
+            }
+            if (self.args.multi_part) |mp| {
+                mp.deinit();
             }
         }
 
@@ -157,7 +160,7 @@ pub const Response = struct {
 
     /// Gets the header associated with the given name.
     pub fn get_header(self: @This(), name: []const u8) errors.HeaderError!?Header {
-        if (comptime !has_curl_header()) {
+        if (comptime !has_parse_header_support()) {
             return error.NoCurlHeaderSupport;
         }
 
@@ -179,42 +182,96 @@ pub const Response = struct {
     }
 };
 
-pub fn init(allocator: Allocator) !Self {
-    const handle = c.curl_easy_init();
-    if (handle == null) {
-        return error.Init;
+pub const MultiPart = struct {
+    mime_handle: *c.curl_mime,
+    allocator: Allocator,
+
+    pub const DataSource = union(enum) {
+        /// Set a mime part's body content from memory data.
+        /// Data will get copied when send request.
+        /// Setting large data is memory consuming: one might consider using `data_callback` in such a case.
+        data: []const u8,
+        /// Set a mime part's body data from a file contents.
+        file: []const u8,
+        // TODO: https://curl.se/libcurl/c/curl_mime_data_cb.html
+        // data_callback: u8,
+    };
+
+    pub fn deinit(self: @This()) void {
+        c.curl_mime_free(self.mime_handle);
     }
 
-    return .{
-        .allocator = allocator,
-        .handle = handle.?,
-    };
+    pub fn add_part(self: @This(), name: []const u8, source: DataSource) !void {
+        const part = if (c.curl_mime_addpart(self.mime_handle)) |part| part else return error.MimeAddPart;
+
+        const namez = try fmt.allocPrintZ(self.allocator, "{s}", .{name});
+        defer self.allocator.free(namez);
+
+        try checkCode(c.curl_mime_name(part, namez));
+        switch (source) {
+            .data => |slice| {
+                try checkCode(c.curl_mime_data(part, slice.ptr, slice.len));
+            },
+            .file => |filepath| {
+                const filepathz = try std.fmt.allocPrintZ(self.allocator, "{s}", .{filepath});
+                defer self.allocator.free(filepathz);
+
+                try checkCode(c.curl_mime_filedata(part, filepathz));
+            },
+        }
+    }
+};
+
+pub fn init(allocator: Allocator) !Self {
+    return if (c.curl_easy_init()) |h|
+        .{
+            .allocator = allocator,
+            .handle = h,
+        }
+    else
+        error.CurlInit;
 }
 
 pub fn deinit(self: Self) void {
     c.curl_easy_cleanup(self.handle);
 }
 
+pub fn add_multi_part(self: Self) !MultiPart {
+    return if (c.curl_mime_init(self.handle)) |h|
+        .{
+            .allocator = self.allocator,
+            .mime_handle = h,
+        }
+    else
+        error.MimeInit;
+}
+
 /// Do sends an HTTP request and returns an HTTP response.
 pub fn do(self: Self, req: anytype) !Response {
-    try self.set_common_opts();
+    // Re-initializes all options previously set on a specified CURL handle to the default values.
+    defer c.curl_easy_reset(self.handle);
 
+    try self.set_common_opts();
     const url = try fmt.allocPrintZ(self.allocator, "{s}", .{req.url});
     defer self.allocator.free(url);
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_URL, url.ptr));
-
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, req.args.redirects)));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, req.args.method.asString().ptr));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, req.getVerbose()));
 
     const body = try req.getBody(self.allocator);
-    defer if (body) |b| self.allocator.free(b);
-
+    defer if (body) |b| {
+        self.allocator.free(b);
+    };
     if (body) |b| {
         try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDS, b.ptr));
         try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, b.len));
-    } else {
-        try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, @as(c_long, 0)));
+    }
+
+    var mime_handle: ?*c.curl_mime = null;
+    if (req.args.multi_part) |mp| {
+        mime_handle = mp.mime_handle;
+        try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MIMEPOST, mime_handle));
     }
 
     var header: ?*c.struct_curl_slist = null;
@@ -222,13 +279,12 @@ pub fn do(self: Self, req: anytype) !Response {
         header = try h.asCHeader(self.default_user_agent);
     }
     defer if (header) |h| RequestHeader.freeCHeader(h);
-
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, header));
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, write_callback));
 
     var resp_buffer = Buffer.init(self.allocator);
     errdefer resp_buffer.deinit();
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEDATA, &resp_buffer));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, write_callback));
 
     try checkCode(c.curl_easy_perform(self.handle));
 
@@ -290,4 +346,15 @@ fn write_callback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyo
 
 fn set_common_opts(self: Self) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_TIMEOUT_MS, self.timeout_ms));
+}
+
+pub fn polyfill_struct_curl_header() type {
+    if (has_parse_header_support()) {
+        return *c.struct_curl_header;
+    } else {
+        // return a dummy struct to make it compile on old version.
+        return struct {
+            value: [:0]const u8,
+        };
+    }
 }

@@ -37,6 +37,7 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     var req = curl.Request(@TypeOf(body)).init("http://httpbin.org/anything/zig-curl", body, .{
         .method = .PUT,
         .header = header,
+        .verbose = true,
     });
     defer req.deinit();
 
@@ -81,6 +82,26 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     }
 }
 
+fn post_mutli_part(easy: Easy) !void {
+    const multi_part = try easy.add_multi_part();
+    try multi_part.add_part("foo", .{ .data = "hello foo" });
+    try multi_part.add_part("bar", .{ .data = "hello bar" });
+    try multi_part.add_part("build.zig", .{ .file = "build.zig" });
+    try multi_part.add_part("readme", .{ .file = "README.org" });
+
+    var req = curl.Request(void).init("http://httpbin.org/anything/mp", {}, .{
+        .method = .PUT,
+        .multi_part = multi_part,
+        .verbose = true,
+    });
+    defer req.deinit();
+
+    const resp = try easy.do(req);
+    defer resp.deinit();
+
+    std.debug.print("resp:{s}\n", .{resp.body.items});
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() != .ok) @panic("leak");
@@ -93,4 +114,5 @@ pub fn main() !void {
 
     println("PUT with custom header demo");
     try put_with_custom_header(allocator, easy);
+    try post_mutli_part(easy);
 }
