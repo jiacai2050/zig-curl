@@ -187,9 +187,14 @@ pub const MultiPart = struct {
     allocator: Allocator,
 
     pub const DataSource = union(enum) {
-        memory: []const u8,
+        /// Set a mime part's body content from memory data.
+        /// Data will get copied when send request.
+        /// Setting large data is memory consuming: one might consider using `data_callback` in such a case.
+        data: []const u8,
+        /// Set a mime part's body data from a file contents.
         file: []const u8,
-        // read_callback :
+        // TODO: https://curl.se/libcurl/c/curl_mime_data_cb.html
+        // data_callback: u8,
     };
 
     pub fn deinit(self: @This()) void {
@@ -204,7 +209,7 @@ pub const MultiPart = struct {
 
         try checkCode(c.curl_mime_name(part, namez));
         switch (source) {
-            .memory => |slice| {
+            .data => |slice| {
                 try checkCode(c.curl_mime_data(part, slice.ptr, slice.len));
             },
             .file => |filepath| {

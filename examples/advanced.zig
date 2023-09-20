@@ -44,7 +44,7 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     const resp = try easy.do(req);
     defer resp.deinit();
 
-    std.debug.print("Status code: {d}\nBody: [{s}]\n", .{
+    std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
         resp.body.items,
     });
@@ -82,12 +82,10 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     }
 }
 
-fn post_mutli_part(allocator: Allocator, easy: Easy) !void {
-    _ = allocator;
-
+fn post_mutli_part(easy: Easy) !void {
     const multi_part = try easy.add_multi_part();
-    try multi_part.add_part("foo", .{ .memory = "hello foo" });
-    try multi_part.add_part("bar", .{ .memory = "hello bar" });
+    try multi_part.add_part("foo", .{ .data = "hello foo" });
+    try multi_part.add_part("bar", .{ .data = "hello bar" });
     try multi_part.add_part("build.zig", .{ .file = "build.zig" });
     try multi_part.add_part("readme", .{ .file = "README.org" });
 
@@ -116,5 +114,5 @@ pub fn main() !void {
 
     println("PUT with custom header demo");
     try put_with_custom_header(allocator, easy);
-    try post_mutli_part(allocator, easy);
+    try post_mutli_part(easy);
 }
