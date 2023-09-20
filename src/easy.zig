@@ -90,6 +90,7 @@ pub const RequestHeader = struct {
 pub const RequestArgs = struct {
     method: Method = .GET,
     header: ?RequestHeader = null,
+    multi_part: ?MultiPart = null,
     verbose: bool = false,
     /// Redirection limit, 0 refuse any redirect, -1 for an infinite number of redirects.
     redirects: i32 = 10,
@@ -180,6 +181,7 @@ pub const Response = struct {
 };
 
 pub const MultiPart = struct {
+    handle: *c.CURL,
     mime_handle: *c.curl_mime,
     allocator: Allocator,
 
@@ -190,31 +192,33 @@ pub const MultiPart = struct {
     };
 
     pub fn init(allocator: Allocator, handle: *c.CURL) !@This() {
-        return if (c.curl_mime_init(handle)) |h|
-            .{
+        return if (c.curl_mime_init(handle)) |h| blk: {
+            errdefer c.curl_mime_free(h);
+
+            try checkCode(c.curl_easy_setopt(handle, c.CURLOPT_MIMEPOST, h));
+
+            break :blk .{
                 .allocator = allocator,
                 .mime_handle = h,
-            }
-        else
-            error.MimeInit;
-    }
-
-    pub fn deinit(self: @This()) void {
-        c.curl_mime_free(self.mime_handle);
+                .handle = handle,
+            };
+        } else error.MimeInit;
     }
 
     pub fn add_part(self: @This(), name: []const u8, source: DataSource) !void {
         const part = if (c.curl_mime_addpart(self.mime_handle)) |part| part else return error.MimeAddPart;
 
-        const namez = try std.fmt.allocPrintZ(self.allocator, "{s}", name);
+        const namez = try fmt.allocPrintZ(self.allocator, "{s}", .{name});
         defer self.allocator.free(namez);
-        c.curl_mime_name(part, namez);
+
+        try checkCode(c.curl_mime_name(part, namez));
         switch (source) {
             .memory => |slice| {
-                try checkCode(c.curl_mime_data(part, slice.ptr, @as(i64, slice.len)));
+                try checkCode(c.curl_mime_data(part, slice.ptr, slice.len));
             },
             .file => |filepath| {
-                const filepathz = try std.fmt.allocPrintZ(self.allocator, "{s}", filepath);
+                const filepathz = try std.fmt.allocPrintZ(self.allocator, "{s}", .{filepath});
+                defer self.allocator.free(filepathz);
 
                 try checkCode(c.curl_mime_filedata(part, filepathz));
             },
@@ -238,6 +242,10 @@ pub fn deinit(self: Self) void {
     c.curl_easy_cleanup(self.handle);
 }
 
+pub fn add_multi_part(self: Self) !MultiPart {
+    return try MultiPart.init(self.allocator, self.handle);
+}
+
 /// Do sends an HTTP request and returns an HTTP response.
 pub fn do(self: Self, req: anytype) !Response {
     try self.set_common_opts();
@@ -259,6 +267,14 @@ pub fn do(self: Self, req: anytype) !Response {
     } else {
         try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, @as(c_long, 0)));
     }
+
+    var mime_handle: ?*c.curl_mime = null;
+    if (req.args.multi_part) |mp| {
+        mime_handle = mp.mime_handle;
+    }
+    defer if (mime_handle) |h| c.curl_mime_free(h);
+
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MIMEPOST, mime_handle));
 
     var header: ?*c.struct_curl_slist = null;
     if (req.args.header) |h| {

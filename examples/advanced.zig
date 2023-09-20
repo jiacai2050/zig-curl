@@ -37,13 +37,14 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     var req = curl.Request(@TypeOf(body)).init("http://httpbin.org/anything/zig-curl", body, .{
         .method = .PUT,
         .header = header,
+        .verbose = true,
     });
     defer req.deinit();
 
     const resp = try easy.do(req);
     defer resp.deinit();
 
-    std.debug.print("Status code: {d}\nBody: {s}\n", .{
+    std.debug.print("Status code: {d}\nBody: [{s}]\n", .{
         resp.status_code,
         resp.body.items,
     });
@@ -81,6 +82,28 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     }
 }
 
+fn post_mutli_part(allocator: Allocator, easy: Easy) !void {
+    _ = allocator;
+
+    const part = try easy.add_multi_part();
+    // defer part.deinit() catch |_| unreachable();
+    try part.add_part("foo", .{ .memory = "hello foo" });
+    try part.add_part("bar", .{ .memory = "hello bar" });
+    try part.add_part("zig_files", .{ .file = "build.zig" });
+
+    var req = curl.Request(void).init("http://httpbin.org/anything/mp", {}, .{
+        .method = .PUT,
+        .multi_part = part,
+        .verbose = true,
+    });
+    defer req.deinit();
+
+    const resp = try easy.do(req);
+    defer resp.deinit();
+
+    std.debug.print("resp:{s}\n", .{resp.body.items});
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() != .ok) @panic("leak");
@@ -93,4 +116,5 @@ pub fn main() !void {
 
     println("PUT with custom header demo");
     try put_with_custom_header(allocator, easy);
+    try post_mutli_part(allocator, easy);
 }
