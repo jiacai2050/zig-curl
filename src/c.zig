@@ -43,21 +43,17 @@ pub fn print_libcurl_version() void {
     }
 }
 
-pub fn polyfill_struct_curl_header() type {
-    if (has_parse_header_support()) {
-        return *c.struct_curl_header;
-    } else {
-        // return a dummy struct to make it compile on old version.
-        return struct {
-            value: [:0]const u8,
-        };
-    }
-}
-
 pub fn has_parse_header_support() bool {
     // `curl_header` is officially supported since 7.84.0.
     // https://curl.se/libcurl/c/curl_easy_header.html
     return c.CURL_AT_LEAST_VERSION(7, 84, 0);
+}
+
+comptime {
+    // `curl_easy_reset` is only available since 7.12.0
+    if (!c.CURL_AT_LEAST_VERSION(7, 12, 0)) {
+        @compileError("Libcurl version must at least 7.12.0");
+    }
 }
 
 pub fn url_encode(string: []const u8) ?[]const u8 {

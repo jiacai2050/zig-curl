@@ -7,8 +7,7 @@ const fmt = std.fmt;
 const Allocator = mem.Allocator;
 const checkCode = errors.checkCode;
 
-const has_curl_header = @import("c.zig").has_parse_header_support;
-const polyfill_struct_curl_header = @import("c.zig").polyfill_struct_curl_header;
+const has_parse_header_support = @import("c.zig").has_parse_header_support;
 
 const Self = @This();
 
@@ -117,6 +116,9 @@ pub fn Request(comptime ReaderType: type) type {
             if (self.args.header) |*h| {
                 h.deinit();
             }
+            if (self.args.multi_part) |mp| {
+                mp.deinit();
+            }
         }
 
         fn getVerbose(self: @This()) c_long {
@@ -158,7 +160,7 @@ pub const Response = struct {
 
     /// Gets the header associated with the given name.
     pub fn get_header(self: @This(), name: []const u8) errors.HeaderError!?Header {
-        if (comptime !has_curl_header()) {
+        if (comptime !has_parse_header_support()) {
             return error.NoCurlHeaderSupport;
         }
 
@@ -181,7 +183,6 @@ pub const Response = struct {
 };
 
 pub const MultiPart = struct {
-    handle: *c.CURL,
     mime_handle: *c.curl_mime,
     allocator: Allocator,
 
@@ -191,18 +192,8 @@ pub const MultiPart = struct {
         // read_callback :
     };
 
-    pub fn init(allocator: Allocator, handle: *c.CURL) !@This() {
-        return if (c.curl_mime_init(handle)) |h| blk: {
-            errdefer c.curl_mime_free(h);
-
-            try checkCode(c.curl_easy_setopt(handle, c.CURLOPT_MIMEPOST, h));
-
-            break :blk .{
-                .allocator = allocator,
-                .mime_handle = h,
-                .handle = handle,
-            };
-        } else error.MimeInit;
+    pub fn deinit(self: @This()) void {
+        c.curl_mime_free(self.mime_handle);
     }
 
     pub fn add_part(self: @This(), name: []const u8, source: DataSource) !void {
@@ -227,15 +218,13 @@ pub const MultiPart = struct {
 };
 
 pub fn init(allocator: Allocator) !Self {
-    const handle = c.curl_easy_init();
-    if (handle == null) {
-        return error.Init;
-    }
-
-    return .{
-        .allocator = allocator,
-        .handle = handle.?,
-    };
+    return if (c.curl_easy_init()) |h|
+        .{
+            .allocator = allocator,
+            .handle = h,
+        }
+    else
+        error.CurlInit;
 }
 
 pub fn deinit(self: Self) void {
@@ -243,51 +232,54 @@ pub fn deinit(self: Self) void {
 }
 
 pub fn add_multi_part(self: Self) !MultiPart {
-    return try MultiPart.init(self.allocator, self.handle);
+    return if (c.curl_mime_init(self.handle)) |h|
+        .{
+            .allocator = self.allocator,
+            .mime_handle = h,
+        }
+    else
+        error.MimeInit;
 }
 
 /// Do sends an HTTP request and returns an HTTP response.
 pub fn do(self: Self, req: anytype) !Response {
-    try self.set_common_opts();
+    // Re-initializes all options previously set on a specified CURL handle to the default values.
+    defer c.curl_easy_reset(self.handle);
 
+    try self.set_common_opts();
     const url = try fmt.allocPrintZ(self.allocator, "{s}", .{req.url});
     defer self.allocator.free(url);
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_URL, url.ptr));
-
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, req.args.redirects)));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, req.args.method.asString().ptr));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, req.getVerbose()));
 
     const body = try req.getBody(self.allocator);
-    defer if (body) |b| self.allocator.free(b);
-
+    defer if (body) |b| {
+        self.allocator.free(b);
+    };
     if (body) |b| {
         try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDS, b.ptr));
         try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, b.len));
-    } else {
-        try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, @as(c_long, 0)));
     }
 
     var mime_handle: ?*c.curl_mime = null;
     if (req.args.multi_part) |mp| {
         mime_handle = mp.mime_handle;
+        try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MIMEPOST, mime_handle));
     }
-    defer if (mime_handle) |h| c.curl_mime_free(h);
-
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MIMEPOST, mime_handle));
 
     var header: ?*c.struct_curl_slist = null;
     if (req.args.header) |h| {
         header = try h.asCHeader(self.default_user_agent);
     }
     defer if (header) |h| RequestHeader.freeCHeader(h);
-
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, header));
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, write_callback));
 
     var resp_buffer = Buffer.init(self.allocator);
     errdefer resp_buffer.deinit();
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEDATA, &resp_buffer));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, write_callback));
 
     try checkCode(c.curl_easy_perform(self.handle));
 
@@ -349,4 +341,15 @@ fn write_callback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyo
 
 fn set_common_opts(self: Self) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_TIMEOUT_MS, self.timeout_ms));
+}
+
+pub fn polyfill_struct_curl_header() type {
+    if (has_parse_header_support()) {
+        return *c.struct_curl_header;
+    } else {
+        // return a dummy struct to make it compile on old version.
+        return struct {
+            value: [:0]const u8,
+        };
+    }
 }

@@ -85,15 +85,15 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
 fn post_mutli_part(allocator: Allocator, easy: Easy) !void {
     _ = allocator;
 
-    const part = try easy.add_multi_part();
-    // defer part.deinit() catch |_| unreachable();
-    try part.add_part("foo", .{ .memory = "hello foo" });
-    try part.add_part("bar", .{ .memory = "hello bar" });
-    try part.add_part("zig_files", .{ .file = "build.zig" });
+    const multi_part = try easy.add_multi_part();
+    try multi_part.add_part("foo", .{ .memory = "hello foo" });
+    try multi_part.add_part("bar", .{ .memory = "hello bar" });
+    try multi_part.add_part("build.zig", .{ .file = "build.zig" });
+    try multi_part.add_part("readme", .{ .file = "README.org" });
 
     var req = curl.Request(void).init("http://httpbin.org/anything/mp", {}, .{
         .method = .PUT,
-        .multi_part = part,
+        .multi_part = multi_part,
         .verbose = true,
     });
     defer req.deinit();
