@@ -6,4 +6,7 @@ run-examples:
 test:
 	zig build test
 
-.PHONY: test run-examples
+docs:
+	zig build-lib -femit-docs src/main.zig
+
+.PHONY: test run-examples docs

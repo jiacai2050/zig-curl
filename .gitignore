@@ -15,3 +15,5 @@ docgen_tmp/
 .vagrant
 Vagrantfile
 zig-linux*
+docs
+libmain*
