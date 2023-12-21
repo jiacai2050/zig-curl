@@ -33,7 +33,7 @@ pub fn main() !void {
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const easy = try Easy.init(allocator);
+    const easy = try Easy.init(allocator, .{});
     defer easy.deinit();
 
     println("GET demo");

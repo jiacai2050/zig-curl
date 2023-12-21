@@ -1,0 +1,16 @@
+.{
+    .name = "zig-curl",
+    .version = "0.1.0",
+    .paths = .{
+        "src",
+        "build.zig",
+        "build.zig.zon",
+        "LICENSE",
+    },
+    .dependencies = .{
+        .libcurl = .{
+            .url = "https://github.com/Cloudef/zigcurl/archive/e9e726131d3eb80c02d20b7ee5ca6935324d6697.tar.gz",
+            .hash = "1220970ad7d9b96b3464fc12c1e67998881bc4d07c03b8b7d75a5367e4c9991ef099",
+        },
+    },
+}
