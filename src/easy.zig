@@ -288,11 +288,11 @@ pub fn do(self: Self, req: anytype) !Response {
 
     try checkCode(c.curl_easy_perform(self.handle));
 
-    var status_code: i32 = 0;
+    var status_code: c_long = 0;
     try checkCode(c.curl_easy_getinfo(self.handle, c.CURLINFO_RESPONSE_CODE, &status_code));
 
     return .{
-        .status_code = status_code,
+        .status_code = @truncate(status_code),
         .body = resp_buffer,
         .handle = self.handle,
         .allocator = self.allocator,
