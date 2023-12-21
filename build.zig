@@ -7,19 +7,21 @@ const MODULE_NAME = "curl";
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
     const module = b.addModule(MODULE_NAME, .{
         .source_file = .{ .path = "src/main.zig" },
     });
 
-    const libcurl = b.dependency("libcurl", .{ .target = target });
+    const libcurl = b.dependency("libcurl", .{ .target = target, .optimize = optimize });
     b.installArtifact(libcurl.artifact("curl"));
 
-    try addExample(b, "basic", module, libcurl, target);
-    try addExample(b, "advanced", module, libcurl, target);
+    try addExample(b, "basic", module, libcurl, target, optimize);
+    try addExample(b, "advanced", module, libcurl, target, optimize);
 
     const main_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/main.zig" },
         .target = target,
+        .optimize = optimize,
     });
     main_tests.addModule(MODULE_NAME, module);
     main_tests.linkLibrary(libcurl.artifact("curl"));
@@ -35,11 +37,13 @@ fn addExample(
     curl_module: *Module,
     libcurl: *Build.Dependency,
     target: std.zig.CrossTarget,
+    optimize: std.builtin.OptimizeMode,
 ) !void {
     const exe = b.addExecutable(.{
         .name = name,
         .root_source_file = LazyPath.relative("examples/" ++ name ++ ".zig"),
         .target = target,
+        .optimize = optimize,
     });
 
     b.installArtifact(exe);
