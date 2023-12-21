@@ -39,5 +39,5 @@ pub fn checkCode(code: c.CURLcode) !void {
     // https://curl.se/libcurl/c/libcurl-errors.html
     std.log.debug("curl err code:{d}, msg:{s}\n", .{ code, c.curl_easy_strerror(code) });
 
-    return error.Unepxected;
+    return error.Unexpected;
 }
