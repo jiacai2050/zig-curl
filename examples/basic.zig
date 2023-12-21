@@ -31,7 +31,7 @@ fn post(easy: Easy) !void {
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() != .ok) @panic("leak");
-    var allocator = gpa.allocator();
+    const allocator = gpa.allocator();
 
     const easy = try Easy.init(allocator);
     defer easy.deinit();

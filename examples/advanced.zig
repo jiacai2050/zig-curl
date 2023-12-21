@@ -24,7 +24,7 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     var stream = std.io.fixedBufferStream(
         \\ {"name": "John", "age": 15}
     );
-    var body = stream.reader();
+    const body = stream.reader();
 
     const header = blk: {
         var h = curl.RequestHeader.init(allocator);
@@ -105,7 +105,7 @@ fn post_mutli_part(easy: Easy) !void {
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() != .ok) @panic("leak");
-    var allocator = gpa.allocator();
+    const allocator = gpa.allocator();
 
     const easy = try Easy.init(allocator);
     defer easy.deinit();
