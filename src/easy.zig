@@ -1,6 +1,7 @@
 const c = @import("c.zig").c;
 const std = @import("std");
 const errors = @import("errors.zig");
+const util = @import("util.zig");
 
 const mem = std.mem;
 const fmt = std.fmt;
@@ -16,9 +17,12 @@ handle: *c.CURL,
 /// The maximum time in milliseconds that the entire transfer operation to take.
 timeout_ms: usize = 30_000,
 default_user_agent: []const u8 = "zig-curl/0.1.0",
+ca_bundle: ?[]const u8,
 
 pub const HEADER_CONTENT_TYPE: []const u8 = "Content-Type";
 pub const HEADER_USER_AGENT: []const u8 = "User-Agent";
+const CERT_MARKER_BEGIN = "-----BEGIN CERTIFICATE-----";
+const CERT_MARKER_END = "\n-----END CERTIFICATE-----\n";
 
 pub const Method = enum {
     GET,
@@ -222,17 +226,58 @@ pub const MultiPart = struct {
     }
 };
 
-pub fn init(allocator: Allocator) !Self {
+/// Init options for Easy handle
+pub const EasyOptions = struct {
+    /// Use zig's std.crypto.Certificate.Bundle for TLS instead of libcurl's default.
+    /// Note that the builtin libcurl is compiled with mbedtls and does not include a CA bundle.
+    use_std_crypto_ca_bundle: bool = true,
+};
+
+pub fn init(allocator: Allocator, options: EasyOptions) !Self {
+    const ca_bundle = blk: {
+        if (options.use_std_crypto_ca_bundle) {
+            var bundle: std.crypto.Certificate.Bundle = .{};
+            defer bundle.deinit(allocator);
+
+            try bundle.rescan(allocator);
+
+            var blob = std.ArrayList(u8).init(allocator);
+            var iter = bundle.map.iterator();
+            while (iter.next()) |entry| {
+                const der = try std.crypto.Certificate.der.Element.parse(bundle.bytes.items, entry.value_ptr.*);
+                const cert = bundle.bytes.items[entry.value_ptr.*..der.slice.end];
+                const encoded = try util.encode_base64(allocator, cert);
+                defer allocator.free(encoded);
+
+                try blob.ensureUnusedCapacity(CERT_MARKER_BEGIN.len + CERT_MARKER_END.len + encoded.len);
+                try blob.appendSlice(CERT_MARKER_BEGIN);
+                for (encoded, 0..) |char, n| {
+                    if (n % 64 == 0) try blob.append('\n');
+                    try blob.append(char);
+                }
+                try blob.appendSlice(CERT_MARKER_END);
+            }
+            break :blk try blob.toOwnedSlice();
+        } else {
+            break :blk null;
+        }
+    };
+
     return if (c.curl_easy_init()) |h|
         .{
             .allocator = allocator,
             .handle = h,
+            .ca_bundle = ca_bundle,
         }
     else
         error.CurlInit;
 }
 
 pub fn deinit(self: Self) void {
+    if (self.ca_bundle) |bundle| {
+        self.allocator.free(bundle);
+    }
+
     c.curl_easy_cleanup(self.handle);
 }
 
@@ -258,6 +303,15 @@ pub fn do(self: Self, req: anytype) !Response {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, req.args.redirects)));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, req.args.method.asString().ptr));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, req.getVerbose()));
+
+    if (self.ca_bundle) |bundle| {
+        const blob = c.curl_blob{
+            .data = @constCast(bundle.ptr),
+            .len = bundle.len,
+            .flags = c.CURL_BLOB_NOCOPY,
+        };
+        try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CAINFO_BLOB, blob));
+    }
 
     const body = try req.getBody(self.allocator);
     defer if (body) |b| {
@@ -288,11 +342,11 @@ pub fn do(self: Self, req: anytype) !Response {
 
     try checkCode(c.curl_easy_perform(self.handle));
 
-    var status_code: i32 = 0;
+    var status_code: c_long = 0;
     try checkCode(c.curl_easy_getinfo(self.handle, c.CURLINFO_RESPONSE_CODE, &status_code));
 
     return .{
-        .status_code = status_code,
+        .status_code = @truncate(status_code),
         .body = resp_buffer,
         .handle = self.handle,
         .allocator = self.allocator,

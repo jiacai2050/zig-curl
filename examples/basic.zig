@@ -6,7 +6,7 @@ const curl = @import("curl");
 const Easy = curl.Easy;
 
 fn get(easy: Easy) !void {
-    const resp = try easy.get("http://httpbin.org/anything");
+    const resp = try easy.get("https://httpbin.org/anything");
     defer resp.deinit();
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
@@ -19,7 +19,7 @@ fn post(easy: Easy) !void {
     var payload = std.io.fixedBufferStream(
         \\{"name": "John", "age": 15}
     );
-    const resp = try easy.post("http://httpbin.org/anything", "application/json", payload.reader());
+    const resp = try easy.post("https://httpbin.org/anything", "application/json", payload.reader());
     defer resp.deinit();
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
@@ -31,9 +31,9 @@ fn post(easy: Easy) !void {
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() != .ok) @panic("leak");
-    var allocator = gpa.allocator();
+    const allocator = gpa.allocator();
 
-    const easy = try Easy.init(allocator);
+    const easy = try Easy.init(allocator, .{});
     defer easy.deinit();
 
     println("GET demo");

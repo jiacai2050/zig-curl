@@ -1,6 +1,6 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2023-09-19T08:30:18+0800
+#+LASTMOD: 2023-12-23T11:51:43+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -14,16 +14,21 @@ This package is in its early stage, although the core functionality works right 
 =zig-curl= only support [[https://ziglang.org/download/][Zig master]], and any contributions are welcomed. ⚒️
 #+end_quote
 
+The builtin libcurl consists of:
+- curl 8.1.1
+- mbedtls 3.4.0
+- zlib 1.2.13
+
 * Usage
 #+begin_src zig
-const Easy = @import("curl").Easy;
+const curl = @import("curl");
 
 pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) @panic("leak");
+    const allocator = gpa.allocator();
 
-    const easy = try Easy.init(allocator);
+    const easy = try curl.Easy.init(allocator, .{});
     defer easy.deinit();
 
     const resp = try easy.get("http://httpbin.org/anything");
@@ -66,8 +71,9 @@ const curl = b.dependency("curl", .{});
 
 // add curl module to an executable.
 exe.addModule("curl", curl.module("curl"));
-// Note: since this package doesn't bundle static libcurl,
-// so users need to link to system-wide libcurl.
+// For builtin libcurl
+exe.linkLibrary(curl.artifact("curl"));
+// For system-wide libcurl
 exe.linkSystemLibrary("curl");
 exe.linkLibC();
 #+end_src
