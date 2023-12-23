@@ -1,6 +1,7 @@
 const c = @import("c.zig").c;
 const std = @import("std");
 const errors = @import("errors.zig");
+const util = @import("util.zig");
 
 const mem = std.mem;
 const fmt = std.fmt;
@@ -20,6 +21,8 @@ ca_bundle: ?[]const u8,
 
 pub const HEADER_CONTENT_TYPE: []const u8 = "Content-Type";
 pub const HEADER_USER_AGENT: []const u8 = "User-Agent";
+const CERT_MARKER_BEGIN = "-----BEGIN CERTIFICATE-----";
+const CERT_MARKER_END = "\n-----END CERTIFICATE-----\n";
 
 pub const Method = enum {
     GET,
@@ -233,30 +236,28 @@ pub const EasyOptions = struct {
 pub fn init(allocator: Allocator, options: EasyOptions) !Self {
     const ca_bundle = blk: {
         if (options.use_std_crypto_ca_bundle) {
-            var bundle = std.crypto.Certificate.Bundle{};
+            var bundle: std.crypto.Certificate.Bundle = .{};
             defer bundle.deinit(allocator);
+
             try bundle.rescan(allocator);
-            var blob = std.ArrayListUnmanaged(u8){};
-            const base64 = std.base64.standard.Encoder;
+
+            var blob = std.ArrayList(u8).init(allocator);
             var iter = bundle.map.iterator();
             while (iter.next()) |entry| {
                 const der = try std.crypto.Certificate.der.Element.parse(bundle.bytes.items, entry.value_ptr.*);
                 const cert = bundle.bytes.items[entry.value_ptr.*..der.slice.end];
-                const begin_marker = "-----BEGIN CERTIFICATE-----";
-                const end_marker = "\n-----END CERTIFICATE-----\n";
-                const encoded_sz = base64.calcSize(cert.len);
-                try blob.ensureTotalCapacity(allocator, blob.items.len + encoded_sz);
-                var encoded = try allocator.alloc(u8, encoded_sz + begin_marker.len + end_marker.len);
+                const encoded = try util.encode_base64(allocator, cert);
                 defer allocator.free(encoded);
-                _ = base64.encode(encoded[0..], cert);
-                try blob.appendSlice(allocator, begin_marker);
+
+                try blob.ensureUnusedCapacity(CERT_MARKER_BEGIN.len + CERT_MARKER_END.len + encoded.len);
+                try blob.appendSlice(CERT_MARKER_BEGIN);
                 for (encoded, 0..) |char, n| {
-                    if (n % 64 == 0) try blob.append(allocator, '\n');
-                    try blob.append(allocator, char);
+                    if (n % 64 == 0) try blob.append('\n');
+                    try blob.append(char);
                 }
-                try blob.appendSlice(allocator, end_marker);
+                try blob.appendSlice(CERT_MARKER_END);
             }
-            break :blk try blob.toOwnedSlice(allocator);
+            break :blk try blob.toOwnedSlice();
         } else {
             break :blk null;
         }
@@ -273,7 +274,10 @@ pub fn init(allocator: Allocator, options: EasyOptions) !Self {
 }
 
 pub fn deinit(self: Self) void {
-    if (self.ca_bundle) |bundle| self.allocator.free(bundle);
+    if (self.ca_bundle) |bundle| {
+        self.allocator.free(bundle);
+    }
+
     c.curl_easy_cleanup(self.handle);
 }
 
@@ -301,7 +305,7 @@ pub fn do(self: Self, req: anytype) !Response {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, req.getVerbose()));
 
     if (self.ca_bundle) |bundle| {
-        const blob = c.curl_blob {
+        const blob = c.curl_blob{
             .data = @constCast(bundle.ptr),
             .len = bundle.len,
             .flags = c.CURL_BLOB_NOCOPY,

@@ -1,6 +1,6 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2023-09-19T08:30:18+0800
+#+LASTMOD: 2023-12-23T11:51:43+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -14,7 +14,7 @@ This package is in its early stage, although the core functionality works right 
 =zig-curl= only support [[https://ziglang.org/download/][Zig master]], and any contributions are welcomed. ⚒️
 #+end_quote
 
-The builtin curl consists of:
+The builtin libcurl consists of:
 - curl 8.1.1
 - mbedtls 3.4.0
 - zlib 1.2.13
@@ -24,12 +24,9 @@ The builtin curl consists of:
 const curl = @import("curl");
 
 pub fn main() !void {
-    try curl.global_init();
-    defer curl.global_deinit();
-
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) @panic("leak");
+    const allocator = gpa.allocator();
 
     const easy = try curl.Easy.init(allocator, .{});
     defer easy.deinit();

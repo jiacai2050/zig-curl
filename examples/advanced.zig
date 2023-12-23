@@ -34,7 +34,7 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
         try h.add("Authorization", "Basic YWxhZGRpbjpvcGVuc2VzYW1l");
         break :blk h;
     };
-    var req = curl.Request(@TypeOf(body)).init("http://httpbin.org/anything/zig-curl", body, .{
+    var req = curl.Request(@TypeOf(body)).init("https://httpbin.org/anything/zig-curl", body, .{
         .method = .PUT,
         .header = header,
         .verbose = true,
@@ -66,7 +66,7 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
                 .age = 15,
             },
             .method = "PUT",
-            .url = "http://httpbin.org/anything/zig-curl",
+            .url = "https://httpbin.org/anything/zig-curl",
         },
     );
 
@@ -89,7 +89,7 @@ fn post_mutli_part(easy: Easy) !void {
     try multi_part.add_part("build.zig", .{ .file = "build.zig" });
     try multi_part.add_part("readme", .{ .file = "README.org" });
 
-    var req = curl.Request(void).init("http://httpbin.org/anything/mp", {}, .{
+    var req = curl.Request(void).init("https://httpbin.org/anything/mp", {}, .{
         .method = .PUT,
         .multi_part = multi_part,
         .verbose = true,
