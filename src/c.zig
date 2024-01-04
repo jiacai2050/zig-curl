@@ -56,7 +56,7 @@ comptime {
     }
 }
 
-pub fn url_encode(string: []const u8) ?[]const u8 {
+pub fn url_encode(string: [:0]const u8) ?[]const u8 {
     const r = c.curl_easy_escape(null, string.ptr, @intCast(string.len));
     return std.mem.sliceTo(r.?, 0);
 }

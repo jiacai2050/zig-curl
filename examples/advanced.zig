@@ -21,23 +21,23 @@ const Resposne = struct {
 };
 
 fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
-    var stream = std.io.fixedBufferStream(
+    const body =
         \\ {"name": "John", "age": 15}
-    );
-    const body = stream.reader();
+    ;
 
     const header = blk: {
-        var h = curl.RequestHeader.init(allocator);
+        var h = curl.Request.Header.init(allocator);
         errdefer h.deinit();
         try h.add(curl.HEADER_CONTENT_TYPE, "application/json");
         try h.add("user-agent", UA);
         try h.add("Authorization", "Basic YWxhZGRpbjpvcGVuc2VzYW1l");
         break :blk h;
     };
-    var req = curl.Request(@TypeOf(body)).init("https://httpbin.org/anything/zig-curl", body, .{
+    var req = curl.Request.init("https://httpbin.org/anything/zig-curl", .{
         .method = .PUT,
         .header = header,
         .verbose = true,
+        .body = body,
     });
     defer req.deinit();
 
@@ -89,7 +89,7 @@ fn post_mutli_part(easy: Easy) !void {
     try multi_part.add_part("build.zig", .{ .file = "build.zig" });
     try multi_part.add_part("readme", .{ .file = "README.org" });
 
-    var req = curl.Request(void).init("https://httpbin.org/anything/mp", {}, .{
+    var req = curl.Request.init("https://httpbin.org/anything/mp", .{
         .method = .PUT,
         .multi_part = multi_part,
         .verbose = true,
