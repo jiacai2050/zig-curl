@@ -14,13 +14,10 @@ const Self = @This();
 
 allocator: Allocator,
 handle: *c.CURL,
-headers: ?*c.struct_curl_slist,
 timeout_ms: usize,
 user_agent: [:0]const u8,
 ca_bundle: ?[]const u8,
 
-pub const HEADER_CONTENT_TYPE: []const u8 = "Content-Type";
-pub const HEADER_USER_AGENT: []const u8 = "User-Agent";
 const CERT_MARKER_BEGIN = "-----BEGIN CERTIFICATE-----";
 const CERT_MARKER_END = "\n-----END CERTIFICATE-----\n";
 
@@ -161,7 +158,6 @@ pub fn init(allocator: Allocator, options: EasyOptions) !Self {
             .timeout_ms = options.default_timeout_ms,
             .user_agent = options.default_user_agent,
             .ca_bundle = ca_bundle,
-            .headers = null,
         }
     else
         error.CurlInit;
@@ -172,7 +168,6 @@ pub fn deinit(self: Self) void {
         self.allocator.free(bundle);
     }
 
-    c.curl_slist_free_all(self.headers);
     c.curl_easy_cleanup(self.handle);
 }
 
@@ -206,41 +201,14 @@ pub fn set_verbose(self: Self, verbose: bool) !void {
 pub fn set_post_fields(self: Self, body: []const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDS, body.ptr));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, body.len));
-    return self;
 }
 
 pub fn reset(self: Self) void {
     c.curl_easy_reset(self.handle);
 }
 
-pub fn set_headers(self: Self, headers: std.StringHashMap([:0]const u8)) !Self {
-    if (headers.count() == 0) {
-        return null;
-    }
-
-    var lst: ?*c.struct_curl_slist = null;
-    var it = headers.iterator();
-    var has_ua = false;
-    while (it.next()) |entry| {
-        if (!has_ua and std.ascii.eqlIgnoreCase(entry.key_ptr.*, HEADER_USER_AGENT)) {
-            has_ua = true;
-        }
-
-        const kv = try fmt.allocPrint(self.allocator, "{s}: {s}", .{ entry.key_ptr.*, entry.value_ptr.* });
-        defer self.allocator.free(kv);
-
-        lst = c.curl_slist_append(lst, kv);
-    }
-    if (!has_ua) {
-        const kv = try fmt.allocPrintZ(self.allocator, "{s}: {s}", .{ HEADER_USER_AGENT, self.user_agent });
-        defer self.allocator.free(kv);
-
-        lst = c.curl_slist_append(lst, kv);
-    }
-
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, lst));
-    self.headers = lst;
-    return self;
+pub fn set_headers(self: Self, headers: *c.struct_curl_slist) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, headers));
 }
 
 /// Perform sends an HTTP request and returns an HTTP response.
@@ -264,7 +232,7 @@ pub fn perform(self: Self) !Response {
     try checkCode(c.curl_easy_getinfo(self.handle, c.CURLINFO_RESPONSE_CODE, &status_code));
 
     return .{
-        .status_code = @truncate(status_code),
+        .status_code = @intCast(status_code),
         .body = resp_buffer,
         .handle = self.handle,
         .allocator = self.allocator,
@@ -286,25 +254,20 @@ pub fn head(self: Self, url: [:0]const u8) !Response {
 }
 
 // /// Post issues a POST to the specified URL.
-// pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, body: anytype) !Response {
-//     const header = blk: {
-//         var h = Request.Header.init(self.allocator);
-//         errdefer h.deinit();
-//         try h.add(HEADER_CONTENT_TYPE, content_type);
-//         break :blk h;
-//     };
-//     const payload = try body.readAllAlloc(self.allocator, 123);
-//     defer self.allocator.free(payload);
+pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, body: []const u8) !Response {
+    try self.set_url(url);
+    try self.set_post_fields(body);
 
-//     var req = Request.init(url, .{
-//         .method = .POST,
-//         .header = header,
-//         .body = payload,
-//     });
-//     defer req.deinit();
+    var headers = std.StringHashMap([]const u8).init(self.allocator);
+    try headers.put(util.HEADER_CONTENT_TYPE, content_type);
+    defer headers.deinit();
 
-//     return self.do(req);
-// }
+    const c_headers = try util.map_to_headers(self.allocator, headers, self.user_agent);
+    defer c.curl_slist_free_all(c_headers);
+
+    try self.set_headers(c_headers);
+    return self.perform();
+}
 
 /// Used for https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION.html
 // size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata);
