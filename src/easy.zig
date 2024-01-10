@@ -14,6 +14,7 @@ const Self = @This();
 
 allocator: Allocator,
 handle: *c.CURL,
+headers: ?*c.struct_curl_slist,
 timeout_ms: usize,
 user_agent: [:0]const u8,
 ca_bundle: ?[]const u8,
@@ -33,97 +34,6 @@ pub const Method = enum {
 
     fn asString(self: Method) [:0]const u8 {
         return @tagName(self);
-    }
-};
-
-pub const Request = struct {
-    url: [:0]const u8,
-    /// body is io.Reader or void
-    opts: Options,
-
-    pub const Options = struct {
-        method: Method = .GET,
-        header: ?Request.Header = null,
-        multi_part: ?MultiPart = null,
-        body: ?[]const u8 = null,
-        verbose: bool = false,
-        /// Redirection limit, 0 refuse any redirect, -1 for an infinite number of redirects.
-        redirects: i32 = 10,
-        /// Max body size, default 128M.
-        max_body_size: usize = 128 * 1024 * 1024,
-    };
-
-    pub const Header = struct {
-        entries: std.StringHashMap([]const u8),
-        allocator: Allocator,
-
-        pub fn init(allocator: Allocator) @This() {
-            return .{
-                .entries = std.StringHashMap([]const u8).init(allocator),
-                .allocator = allocator,
-            };
-        }
-
-        pub fn deinit(self: *@This()) void {
-            self.entries.deinit();
-        }
-
-        pub fn add(self: *Header, k: []const u8, v: []const u8) !void {
-            try self.entries.put(k, v);
-        }
-
-        // Note: Caller should free returned list (after usage) with `freeCHeader`.
-        fn asCHeader(self: Header, ua: []const u8) !?*c.struct_curl_slist {
-            if (self.entries.count() == 0) {
-                return null;
-            }
-
-            var lst: ?*c.struct_curl_slist = null;
-            var it = self.entries.iterator();
-            var has_ua = false;
-            while (it.next()) |entry| {
-                if (!has_ua and std.ascii.eqlIgnoreCase(entry.key_ptr.*, HEADER_USER_AGENT)) {
-                    has_ua = true;
-                }
-
-                const kv = try fmt.allocPrintZ(self.allocator, "{s}: {s}", .{ entry.key_ptr.*, entry.value_ptr.* });
-                defer self.allocator.free(kv);
-
-                lst = c.curl_slist_append(lst, kv);
-            }
-            if (!has_ua) {
-                const kv = try fmt.allocPrintZ(self.allocator, "{s}: {s}", .{ HEADER_USER_AGENT, ua });
-                defer self.allocator.free(kv);
-
-                lst = c.curl_slist_append(lst, kv);
-            }
-
-            return lst;
-        }
-
-        fn freeCHeader(lst: *c.struct_curl_slist) void {
-            c.curl_slist_free_all(lst);
-        }
-    };
-
-    pub fn init(url: [:0]const u8, opts: RequestOptions) @This() {
-        return .{
-            .url = url,
-            .opts = opts,
-        };
-    }
-
-    pub fn deinit(self: *@This()) void {
-        if (self.opts.header) |*h| {
-            h.deinit();
-        }
-        if (self.opts.multi_part) |mp| {
-            mp.deinit();
-        }
-    }
-
-    fn getVerbose(self: @This()) c_long {
-        return if (self.opts.verbose) 1 else 0;
     }
 };
 
@@ -251,6 +161,7 @@ pub fn init(allocator: Allocator, options: EasyOptions) !Self {
             .timeout_ms = options.default_timeout_ms,
             .user_agent = options.default_user_agent,
             .ca_bundle = ca_bundle,
+            .headers = null,
         }
     else
         error.CurlInit;
@@ -261,6 +172,7 @@ pub fn deinit(self: Self) void {
         self.allocator.free(bundle);
     }
 
+    c.curl_slist_free_all(self.headers);
     c.curl_easy_cleanup(self.handle);
 }
 
@@ -274,45 +186,72 @@ pub fn add_multi_part(self: Self) !MultiPart {
         error.MimeInit;
 }
 
-/// Do sends an HTTP request and returns an HTTP response.
-pub fn do(self: Self, req: anytype) !Response {
-    // Re-initializes all options previously set on a specified CURL handle to the default values.
-    defer c.curl_easy_reset(self.handle);
-
-    try self.set_common_opts();
-    const url = try fmt.allocPrintZ(self.allocator, "{s}", .{req.url});
-    defer self.allocator.free(url);
+pub fn set_url(self: Self, url: [:0]const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_URL, url.ptr));
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, req.opts.redirects)));
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, req.opts.method.asString().ptr));
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, req.getVerbose()));
+}
 
-    if (self.ca_bundle) |bundle| {
-        const blob = c.curl_blob{
-            .data = @constCast(bundle.ptr),
-            .len = bundle.len,
-            .flags = c.CURL_BLOB_NOCOPY,
-        };
-        try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CAINFO_BLOB, blob));
+pub fn set_max_redirects(self: Self, redirects: u32) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, redirects)));
+}
+
+pub fn set_method(self: Self, method: Method) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, method.asString().ptr));
+    return self;
+}
+
+pub fn set_verbose(self: Self, verbose: bool) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, verbose));
+}
+
+pub fn set_post_fields(self: Self, body: []const u8) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDS, body.ptr));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, body.len));
+    return self;
+}
+
+pub fn reset(self: Self) void {
+    c.curl_easy_reset(self.handle);
+}
+
+pub fn set_headers(self: Self, headers: std.StringHashMap([:0]const u8)) !Self {
+    if (headers.count() == 0) {
+        return null;
     }
 
-    if (req.opts.body) |b| {
-        try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDS, b.ptr));
-        try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, b.len));
+    var lst: ?*c.struct_curl_slist = null;
+    var it = headers.iterator();
+    var has_ua = false;
+    while (it.next()) |entry| {
+        if (!has_ua and std.ascii.eqlIgnoreCase(entry.key_ptr.*, HEADER_USER_AGENT)) {
+            has_ua = true;
+        }
+
+        const kv = try fmt.allocPrint(self.allocator, "{s}: {s}", .{ entry.key_ptr.*, entry.value_ptr.* });
+        defer self.allocator.free(kv);
+
+        lst = c.curl_slist_append(lst, kv);
+    }
+    if (!has_ua) {
+        const kv = try fmt.allocPrintZ(self.allocator, "{s}: {s}", .{ HEADER_USER_AGENT, self.user_agent });
+        defer self.allocator.free(kv);
+
+        lst = c.curl_slist_append(lst, kv);
     }
 
-    var mime_handle: ?*c.curl_mime = null;
-    if (req.opts.multi_part) |mp| {
-        mime_handle = mp.mime_handle;
-        try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MIMEPOST, mime_handle));
-    }
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, lst));
+    self.headers = lst;
+    return self;
+}
 
-    var header: ?*c.struct_curl_slist = null;
-    if (req.opts.header) |h| {
-        header = try h.asCHeader(self.user_agent);
-    }
-    defer if (header) |h| Request.Header.freeCHeader(h);
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, header));
+/// Perform sends an HTTP request and returns an HTTP response.
+pub fn perform(self: Self) !Response {
+    try self.set_common_opts();
+
+    // var mime_handle: ?*c.curl_mime = null;
+    // if (req.opts.multi_part) |mp| {
+    //     mime_handle = mp.mime_handle;
+    //     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MIMEPOST, mime_handle));
+    // }
 
     var resp_buffer = Buffer.init(self.allocator);
     errdefer resp_buffer.deinit();
@@ -334,40 +273,38 @@ pub fn do(self: Self, req: anytype) !Response {
 
 /// Get issues a GET to the specified URL.
 pub fn get(self: Self, url: [:0]const u8) !Response {
-    var req = Request.init(url, .{});
-    defer req.deinit();
-
-    return self.do(req);
+    try self.set_url(url);
+    return self.perform();
 }
 
 /// Head issues a HEAD to the specified URL.
 pub fn head(self: Self, url: [:0]const u8) !Response {
-    var req = Request.init(url, .{ .method = .HEAD });
-    defer req.deinit();
+    try self.set_url(url);
+    try self.set_method(.HEAD);
 
-    return self.do(req);
+    return self.perform();
 }
 
-/// Post issues a POST to the specified URL.
-pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, body: anytype) !Response {
-    const header = blk: {
-        var h = Request.Header.init(self.allocator);
-        errdefer h.deinit();
-        try h.add(HEADER_CONTENT_TYPE, content_type);
-        break :blk h;
-    };
-    const payload = try body.readAllAlloc(self.allocator, 123);
-    defer self.allocator.free(payload);
+// /// Post issues a POST to the specified URL.
+// pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, body: anytype) !Response {
+//     const header = blk: {
+//         var h = Request.Header.init(self.allocator);
+//         errdefer h.deinit();
+//         try h.add(HEADER_CONTENT_TYPE, content_type);
+//         break :blk h;
+//     };
+//     const payload = try body.readAllAlloc(self.allocator, 123);
+//     defer self.allocator.free(payload);
 
-    var req = Request.init(url, .{
-        .method = .POST,
-        .header = header,
-        .body = payload,
-    });
-    defer req.deinit();
+//     var req = Request.init(url, .{
+//         .method = .POST,
+//         .header = header,
+//         .body = payload,
+//     });
+//     defer req.deinit();
 
-    return self.do(req);
-}
+//     return self.do(req);
+// }
 
 /// Used for https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION.html
 // size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata);
@@ -382,6 +319,14 @@ fn write_callback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyo
 }
 
 fn set_common_opts(self: Self) !void {
+    if (self.ca_bundle) |bundle| {
+        const blob = c.curl_blob{
+            .data = @constCast(bundle.ptr),
+            .len = bundle.len,
+            .flags = c.CURL_BLOB_NOCOPY,
+        };
+        try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CAINFO_BLOB, blob));
+    }
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_TIMEOUT_MS, self.timeout_ms));
 }
 

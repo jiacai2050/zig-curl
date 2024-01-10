@@ -39,6 +39,6 @@ pub fn main() !void {
     println("GET demo");
     try get(easy);
 
-    println("POST demo");
-    try post(easy);
+    // println("POST demo");
+    // try post(easy);
 }
