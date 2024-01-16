@@ -31,7 +31,7 @@ fn get(allocator: Allocator, easy: Easy) !void {
     });
 }
 
-fn post(allocator: Allocator, easy: Easy) !void {
+fn post(allocator: Allocator, easy: *Easy) !void {
     const payload =
         \\{"name": "John", "age": 15}
     ;
@@ -69,12 +69,12 @@ pub fn main() !void {
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const easy = try Easy.init(allocator, .{});
+    var easy = try Easy.init(allocator, .{});
     defer easy.deinit();
 
     println("GET demo");
     try get(allocator, easy);
 
     println("POST demo");
-    try post(allocator, easy);
+    try post(allocator, &easy);
 }

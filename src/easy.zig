@@ -14,6 +14,7 @@ const Self = @This();
 
 allocator: Allocator,
 handle: *c.CURL,
+headers: ?*c.struct_curl_slist,
 timeout_ms: usize,
 user_agent: [:0]const u8,
 ca_bundle: ?[]const u8,
@@ -34,6 +35,7 @@ pub const Method = enum {
     }
 };
 
+pub const Headers = std.StringHashMap([]const u8);
 pub const Buffer = std.ArrayList(u8);
 pub const Response = struct {
     body: Buffer,
@@ -158,6 +160,7 @@ pub fn init(allocator: Allocator, options: EasyOptions) !Self {
             .timeout_ms = options.default_timeout_ms,
             .user_agent = options.default_user_agent,
             .ca_bundle = ca_bundle,
+            .headers = null,
         }
     else
         error.CurlInit;
@@ -168,10 +171,14 @@ pub fn deinit(self: Self) void {
         self.allocator.free(bundle);
     }
 
+    if (self.headers) |h| {
+        c.curl_slist_free_all(h);
+    }
+
     c.curl_easy_cleanup(self.handle);
 }
 
-pub fn add_multi_part(self: Self) !MultiPart {
+pub fn create_multi_part(self: Self) !MultiPart {
     return if (c.curl_mime_init(self.handle)) |h|
         .{
             .allocator = self.allocator,
@@ -191,7 +198,6 @@ pub fn set_max_redirects(self: Self, redirects: u32) !void {
 
 pub fn set_method(self: Self, method: Method) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, method.asString().ptr));
-    return self;
 }
 
 pub fn set_verbose(self: Self, verbose: bool) !void {
@@ -203,12 +209,21 @@ pub fn set_post_fields(self: Self, body: []const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, body.len));
 }
 
+pub fn set_multi_part(self: Self, multi_part: MultiPart) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MIMEPOST, multi_part.mime_handle));
+}
+
 pub fn reset(self: Self) void {
     c.curl_easy_reset(self.handle);
 }
 
-pub fn set_headers(self: Self, headers: *c.struct_curl_slist) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, headers));
+pub fn set_headers(self: *Self, headers: Headers) !void {
+    const c_headers = try util.map_to_headers(self.allocator, headers, self.user_agent);
+    if (self.headers) |h| {
+        c.curl_slist_free_all(h);
+    }
+    self.headers = c_headers;
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, c_headers));
 }
 
 /// Perform sends an HTTP request and returns an HTTP response.
@@ -254,18 +269,15 @@ pub fn head(self: Self, url: [:0]const u8) !Response {
 }
 
 // /// Post issues a POST to the specified URL.
-pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, body: []const u8) !Response {
+pub fn post(self: *Self, url: [:0]const u8, content_type: []const u8, body: []const u8) !Response {
     try self.set_url(url);
     try self.set_post_fields(body);
 
-    var headers = std.StringHashMap([]const u8).init(self.allocator);
+    var headers = Headers.init(self.allocator);
     try headers.put(util.HEADER_CONTENT_TYPE, content_type);
     defer headers.deinit();
 
-    const c_headers = try util.map_to_headers(self.allocator, headers, self.user_agent);
-    defer c.curl_slist_free_all(c_headers);
-
-    try self.set_headers(c_headers);
+    try self.set_headers(headers);
     return self.perform();
 }
 

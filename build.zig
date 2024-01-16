@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     // b.installArtifact(libcurl.artifact("curl"));
 
     try addExample(b, "basic", module, target, optimize);
-    // try addExample(b, "advanced", module, libcurl, target, optimize);
+    try addExample(b, "advanced", module, target, optimize);
 
     // const main_tests = b.addTest(.{
     //     .root_source_file = .{ .path = "src/main.zig" },

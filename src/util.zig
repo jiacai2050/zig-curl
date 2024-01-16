@@ -29,6 +29,7 @@ pub fn map_to_headers(allocator: std.mem.Allocator, map: std.StringHashMap([]con
             has_ua = true;
         }
     }
+
     if (!has_ua) {
         const kv = try std.fmt.allocPrintZ(allocator, "{s}: {s}", .{ HEADER_USER_AGENT, user_agent });
         defer allocator.free(kv);
