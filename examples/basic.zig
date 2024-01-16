@@ -31,7 +31,7 @@ fn get(allocator: Allocator, easy: Easy) !void {
     });
 }
 
-fn post(allocator: Allocator, easy: *Easy) !void {
+fn post(allocator: Allocator, easy: Easy) !void {
     const payload =
         \\{"name": "John", "age": 15}
     ;
@@ -45,7 +45,6 @@ fn post(allocator: Allocator, easy: *Easy) !void {
 
     const Response = struct {
         headers: struct {
-            @"User-Agent": []const u8,
             @"Content-Type": []const u8,
         },
         json: struct {
@@ -58,7 +57,7 @@ fn post(allocator: Allocator, easy: *Easy) !void {
     defer parsed.deinit();
 
     try std.testing.expectEqualDeep(parsed.value, Response{
-        .headers = .{ .@"User-Agent" = "zig-curl/0.1.0", .@"Content-Type" = "application/json" },
+        .headers = .{ .@"Content-Type" = "application/json" },
         .json = .{ .name = "John", .age = 15 },
         .method = "POST",
     });
@@ -76,5 +75,5 @@ pub fn main() !void {
     try get(allocator, easy);
 
     println("POST demo");
-    try post(allocator, &easy);
+    try post(allocator, easy);
 }

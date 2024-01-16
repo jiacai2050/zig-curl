@@ -14,9 +14,7 @@ const Self = @This();
 
 allocator: Allocator,
 handle: *c.CURL,
-headers: ?*c.struct_curl_slist,
 timeout_ms: usize,
-user_agent: [:0]const u8,
 ca_bundle: ?[]const u8,
 
 const CERT_MARKER_BEGIN = "-----BEGIN CERTIFICATE-----";
@@ -35,7 +33,29 @@ pub const Method = enum {
     }
 };
 
-pub const Headers = std.StringHashMap([]const u8);
+pub const Headers = struct {
+    headers: ?*c.struct_curl_slist,
+    allocator: Allocator,
+
+    pub fn init(allocator: Allocator) !Headers {
+        return .{
+            .allocator = allocator,
+            .headers = null,
+        };
+    }
+
+    pub fn deinit(self: Headers) void {
+        c.curl_slist_free_all(self.headers);
+    }
+
+    pub fn add(self: *Headers, name: []const u8, value: []const u8) !void {
+        const header = try std.fmt.allocPrintZ(self.allocator, "{s}: {s}", .{ name, value });
+        defer self.allocator.free(header);
+
+        self.headers = c.curl_slist_append(self.headers, header);
+    }
+};
+
 pub const Buffer = std.ArrayList(u8);
 pub const Response = struct {
     body: Buffer,
@@ -119,7 +139,6 @@ pub const EasyOptions = struct {
     /// Use zig's std.crypto.Certificate.Bundle for TLS instead of libcurl's default.
     /// Note that the builtin libcurl is compiled with mbedtls and does not include a CA bundle.
     use_std_crypto_ca_bundle: bool = true,
-    default_user_agent: [:0]const u8 = "zig-curl/0.1.0",
     /// The maximum time in milliseconds that the entire transfer operation to take.
     default_timeout_ms: usize = 30_000,
 };
@@ -158,9 +177,7 @@ pub fn init(allocator: Allocator, options: EasyOptions) !Self {
             .allocator = allocator,
             .handle = handle,
             .timeout_ms = options.default_timeout_ms,
-            .user_agent = options.default_user_agent,
             .ca_bundle = ca_bundle,
-            .headers = null,
         }
     else
         error.CurlInit;
@@ -171,11 +188,11 @@ pub fn deinit(self: Self) void {
         self.allocator.free(bundle);
     }
 
-    if (self.headers) |h| {
-        c.curl_slist_free_all(h);
-    }
-
     c.curl_easy_cleanup(self.handle);
+}
+
+pub fn create_headers(self: Self) !Headers {
+    return Headers.init(self.allocator);
 }
 
 pub fn create_multi_part(self: Self) !MultiPart {
@@ -217,24 +234,15 @@ pub fn reset(self: Self) void {
     c.curl_easy_reset(self.handle);
 }
 
-pub fn set_headers(self: *Self, headers: Headers) !void {
-    const c_headers = try util.map_to_headers(self.allocator, headers, self.user_agent);
-    if (self.headers) |h| {
-        c.curl_slist_free_all(h);
+pub fn set_headers(self: Self, headers: Headers) !void {
+    if (headers.headers) |c_headers| {
+        try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, c_headers));
     }
-    self.headers = c_headers;
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, c_headers));
 }
 
 /// Perform sends an HTTP request and returns an HTTP response.
 pub fn perform(self: Self) !Response {
     try self.set_common_opts();
-
-    // var mime_handle: ?*c.curl_mime = null;
-    // if (req.opts.multi_part) |mp| {
-    //     mime_handle = mp.mime_handle;
-    //     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MIMEPOST, mime_handle));
-    // }
 
     var resp_buffer = Buffer.init(self.allocator);
     errdefer resp_buffer.deinit();
@@ -269,13 +277,14 @@ pub fn head(self: Self, url: [:0]const u8) !Response {
 }
 
 // /// Post issues a POST to the specified URL.
-pub fn post(self: *Self, url: [:0]const u8, content_type: []const u8, body: []const u8) !Response {
+pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, body: []const u8) !Response {
     try self.set_url(url);
     try self.set_post_fields(body);
 
-    var headers = Headers.init(self.allocator);
-    try headers.put(util.HEADER_CONTENT_TYPE, content_type);
+    var headers = try self.create_headers();
     defer headers.deinit();
+
+    try headers.add(util.HEADER_CONTENT_TYPE, content_type);
 
     try self.set_headers(headers);
     return self.perform();

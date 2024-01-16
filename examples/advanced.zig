@@ -20,17 +20,17 @@ const Response = struct {
     url: []const u8,
 };
 
-fn put_with_custom_header(allocator: Allocator, easy: *Easy) !void {
+fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     const body =
         \\ {"name": "John", "age": 15}
     ;
 
-    var headers = blk: {
-        var h = curl.Headers.init(allocator);
+    const headers = blk: {
+        var h = try easy.create_headers();
         errdefer h.deinit();
-        try h.put(curl.HEADER_CONTENT_TYPE, "application/json");
-        try h.put("user-agent", UA);
-        try h.put("Authorization", "Basic YWxhZGRpbjpvcGVuc2VzYW1l");
+        try h.add(curl.HEADER_CONTENT_TYPE, "application/json");
+        try h.add("user-agent", UA);
+        try h.add("Authorization", "Basic YWxhZGRpbjpvcGVuc2VzYW1l");
         break :blk h;
     };
     defer headers.deinit();
@@ -83,6 +83,9 @@ fn put_with_custom_header(allocator: Allocator, easy: *Easy) !void {
 }
 
 fn post_mutli_part(easy: Easy) !void {
+    // Reset old options, e.g. headers.
+    easy.reset();
+
     const multi_part = try easy.create_multi_part();
     try multi_part.add_part("foo", .{ .data = "hello foo" });
     try multi_part.add_part("bar", .{ .data = "hello bar" });
@@ -112,6 +115,6 @@ pub fn main() !void {
     curl.print_libcurl_version();
 
     println("PUT with custom header demo");
-    try put_with_custom_header(allocator, &easy);
+    try put_with_custom_header(allocator, easy);
     try post_mutli_part(easy);
 }
