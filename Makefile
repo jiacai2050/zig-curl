@@ -1,5 +1,5 @@
 
-run-examples:
+run:
 	zig build run-basic -freference-trace
 	zig build run-advanced -freference-trace
 
@@ -9,4 +9,4 @@ test:
 docs:
 	zig build-lib -femit-docs src/main.zig
 
-.PHONY: test run-examples docs
+.PHONY: test run docs

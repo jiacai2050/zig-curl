@@ -1,6 +1,6 @@
 const std = @import("std");
+const c = @import("c.zig").c;
 const Allocator = std.mem.Allocator;
-
 const Encoder = std.base64.standard.Encoder;
 
 pub fn encode_base64(allocator: Allocator, input: []const u8) ![]const u8 {

@@ -34,7 +34,7 @@ jobs:
           make test
       - name: Run examples
         run: |
-          make run-examples
+          make run
       - name: Memory leak detect
         # Wait https://github.com/ziglang/zig/issues/15547
         if: false
@@ -61,4 +61,4 @@ jobs:
           version: master
       - name: Run examples
         run: |
-          make run-examples
+          make run

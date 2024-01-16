@@ -5,7 +5,7 @@ const Allocator = mem.Allocator;
 const curl = @import("curl");
 const Easy = curl.Easy;
 
-fn get(easy: Easy) !void {
+fn get(allocator: Allocator, easy: Easy) !void {
     const resp = try easy.get("https://httpbin.org/anything");
     defer resp.deinit();
 
@@ -13,18 +13,53 @@ fn get(easy: Easy) !void {
         resp.status_code,
         resp.body.items,
     });
+
+    const Response = struct {
+        headers: struct {
+            Host: []const u8,
+        },
+        method: []const u8,
+    };
+    const parsed = try std.json.parseFromSlice(Response, allocator, resp.body.items, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expectEqualDeep(parsed.value, Response{
+        .headers = .{ .Host = "httpbin.org" },
+        .method = "GET",
+    });
 }
 
-fn post(easy: Easy) !void {
-    var payload = std.io.fixedBufferStream(
+fn post(allocator: Allocator, easy: Easy) !void {
+    const payload =
         \\{"name": "John", "age": 15}
-    );
-    const resp = try easy.post("https://httpbin.org/anything", "application/json", payload.reader());
+    ;
+    const resp = try easy.post("https://httpbin.org/anything", "application/json", payload);
     defer resp.deinit();
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
         resp.body.items,
+    });
+
+    const Response = struct {
+        headers: struct {
+            @"Content-Type": []const u8,
+        },
+        json: struct {
+            name: []const u8,
+            age: u32,
+        },
+        method: []const u8,
+    };
+    const parsed = try std.json.parseFromSlice(Response, allocator, resp.body.items, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+
+    try std.testing.expectEqualDeep(parsed.value, Response{
+        .headers = .{ .@"Content-Type" = "application/json" },
+        .json = .{ .name = "John", .age = 15 },
+        .method = "POST",
     });
 }
 
@@ -37,8 +72,8 @@ pub fn main() !void {
     defer easy.deinit();
 
     println("GET demo");
-    try get(easy);
+    try get(allocator, easy);
 
     println("POST demo");
-    try post(easy);
+    try post(allocator, easy);
 }
