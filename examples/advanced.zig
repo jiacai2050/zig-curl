@@ -28,7 +28,7 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     const headers = blk: {
         var h = try easy.create_headers();
         errdefer h.deinit();
-        try h.add(curl.HEADER_CONTENT_TYPE, "application/json");
+        try h.add("content-type", "application/json");
         try h.add("user-agent", UA);
         try h.add("Authorization", "Basic YWxhZGRpbjpvcGVuc2VzYW1l");
         break :blk h;
@@ -109,7 +109,7 @@ pub fn main() !void {
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    var easy = try Easy.init(allocator, .{});
+    const easy = try Easy.init(allocator, .{});
     defer easy.deinit();
 
     curl.print_libcurl_version();

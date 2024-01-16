@@ -284,7 +284,7 @@ pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, body: []con
     var headers = try self.create_headers();
     defer headers.deinit();
 
-    try headers.add(util.HEADER_CONTENT_TYPE, content_type);
+    try headers.add("Content-Type", content_type);
 
     try self.set_headers(headers);
     return self.perform();

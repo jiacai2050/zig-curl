@@ -9,7 +9,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const module = b.addModule(MODULE_NAME, .{
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = .{ .path = "src/root.zig" },
     });
 
     // FIXME: libcurl doesn't work with zig master yet.
@@ -20,7 +20,7 @@ pub fn build(b: *std.Build) void {
     try addExample(b, "advanced", module, target, optimize);
 
     const main_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = .{ .path = "src/root.zig" },
         .target = target,
         .optimize = optimize,
     });
