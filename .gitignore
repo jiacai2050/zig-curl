@@ -16,4 +16,4 @@ docgen_tmp/
 Vagrantfile
 zig-linux*
 docs
-libmain*
+libroot*

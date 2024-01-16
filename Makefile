@@ -7,6 +7,6 @@ test:
 	zig build test
 
 docs:
-	zig build-lib -femit-docs src/main.zig
+	zig build-lib -femit-docs src/root.zig
 
 .PHONY: test run docs
