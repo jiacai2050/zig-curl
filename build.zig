@@ -12,23 +12,24 @@ pub fn build(b: *std.Build) void {
         .root_source_file = .{ .path = "src/main.zig" },
     });
 
+    // FIXME: libcurl doesn't work with zig master yet.
     // const libcurl = b.dependency("libcurl", .{ .target = target, .optimize = optimize });
     // b.installArtifact(libcurl.artifact("curl"));
 
     try addExample(b, "basic", module, target, optimize);
     try addExample(b, "advanced", module, target, optimize);
 
-    // const main_tests = b.addTest(.{
-    //     .root_source_file = .{ .path = "src/main.zig" },
-    //     .target = target,
-    //     .optimize = optimize,
-    // });
-    // main_tests.root_module.addImport(MODULE_NAME, module);
-    // main_tests.linkLibrary(libcurl.artifact("curl"));
+    const main_tests = b.addTest(.{
+        .root_source_file = .{ .path = "src/main.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    main_tests.linkLibC();
+    main_tests.linkSystemLibrary("curl");
 
-    // const run_main_tests = b.addRunArtifact(main_tests);
-    // const test_step = b.step("test", "Run library tests");
-    // test_step.dependOn(&run_main_tests.step);
+    const run_main_tests = b.addRunArtifact(main_tests);
+    const test_step = b.step("test", "Run library tests");
+    test_step.dependOn(&run_main_tests.step);
 }
 
 fn addExample(
@@ -50,6 +51,7 @@ fn addExample(
     exe.root_module.addImport(MODULE_NAME, curl_module);
     // exe.linkLibrary(libcurl.artifact("curl"));
     exe.linkSystemLibrary("curl");
+    exe.linkLibC();
 
     const run_step = b.step("run-" ++ name, std.fmt.comptimePrint("Run {s} example", .{name}));
     run_step.dependOn(&b.addRunArtifact(exe).step);
