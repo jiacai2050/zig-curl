@@ -15,8 +15,10 @@ pub fn build(b: *Build) void {
     const module = b.addModule(MODULE_NAME, .{
         .root_source_file = .{ .path = "src/root.zig" },
     });
-    if (link_vendor) {
-        module.linkLibrary(libcurl);
+    if (link_vendor) |link| {
+        if (link) {
+            module.linkLibrary(libcurl);
+        }
     }
 
     try addExample(b, "basic", module, libcurl, target, optimize);
@@ -37,14 +39,14 @@ pub fn build(b: *Build) void {
 }
 
 fn buildLibcurl(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *Step.Compile {
-    const tls = @import("mbedtls.zig").create(b, target, optimize);
-    const zlib = @import("zlib.zig").create(b, target, optimize);
-    const libcurl = @import("libcurl.zig").create(b, target, optimize);
-    libcurl.linkLibrary(tls);
-    libcurl.linkLibrary(zlib);
+    const tls = @import("libs/mbedtls.zig").create(b, target, optimize);
+    const zlib = @import("libs/zlib.zig").create(b, target, optimize);
+    const curl = @import("libs/curl.zig").create(b, target, optimize);
+    curl.linkLibrary(tls);
+    curl.linkLibrary(zlib);
 
-    b.installArtifact(libcurl);
-    return libcurl;
+    b.installArtifact(curl);
+    return curl;
 }
 
 fn addExample(
