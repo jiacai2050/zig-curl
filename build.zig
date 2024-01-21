@@ -1,19 +1,23 @@
 const std = @import("std");
 const Build = std.Build;
+const Step = Build.Step;
 const Module = Build.Module;
 const LazyPath = Build.LazyPath;
 
 const MODULE_NAME = "curl";
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const link_vendor = b.option(bool, "link_vendor", "Whether link with vendored libcurl");
 
     const libcurl = buildLibcurl(b, target, optimize);
     const module = b.addModule(MODULE_NAME, .{
         .root_source_file = .{ .path = "src/root.zig" },
     });
-    module.linkLibrary(libcurl);
+    if (link_vendor) {
+        module.linkLibrary(libcurl);
+    }
 
     try addExample(b, "basic", module, libcurl, target, optimize);
     try addExample(b, "advanced", module, libcurl, target, optimize);
@@ -32,23 +36,23 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_main_tests.step);
 }
 
-fn buildLibcurl(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *Build.Step.Compile {
+fn buildLibcurl(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *Step.Compile {
     const tls = @import("mbedtls.zig").create(b, target, optimize);
     const zlib = @import("zlib.zig").create(b, target, optimize);
     const libcurl = @import("libcurl.zig").create(b, target, optimize);
     libcurl.linkLibrary(tls);
     libcurl.linkLibrary(zlib);
 
+    b.installArtifact(libcurl);
     return libcurl;
 }
 
 fn addExample(
-    b: *std.Build,
+    b: *Build,
     comptime name: []const u8,
     curl_module: *Module,
-    libcurl: *std.Build.Step.Compile,
-    // libcurl: *Build.Dependency,
-    target: std.Build.ResolvedTarget,
+    libcurl: *Step.Compile,
+    target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) !void {
     const exe = b.addExecutable(.{
@@ -61,9 +65,11 @@ fn addExample(
     b.installArtifact(exe);
     exe.root_module.addImport(MODULE_NAME, curl_module);
     exe.linkLibrary(libcurl);
-    // exe.linkSystemLibrary("curl");
     exe.linkLibC();
 
-    const run_step = b.step("run-" ++ name, std.fmt.comptimePrint("Run {s} example", .{name}));
+    const run_step = b.step(
+        "run-" ++ name,
+        std.fmt.comptimePrint("Run {s} example", .{name}),
+    );
     run_step.dependOn(&b.addRunArtifact(exe).step);
 }

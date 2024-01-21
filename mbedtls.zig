@@ -54,7 +54,6 @@ const srcs = &.{
     "libs/mbedtls/library/entropy_poll.c",
     "libs/mbedtls/library/error.c",
     "libs/mbedtls/library/gcm.c",
-    // "libs/mbedtls/library/hash_info.c",
     "libs/mbedtls/library/hkdf.c",
     "libs/mbedtls/library/hmac_drbg.c",
     "libs/mbedtls/library/lmots.c",
