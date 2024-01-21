@@ -1,5 +1,5 @@
 .{
-    .name = "zig-curl",
+    .name = "curl",
     .version = "0.1.0",
     .paths = .{
         "src",
