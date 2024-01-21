@@ -13,6 +13,6 @@ unzip mbedtls.zip
 unzip libcurl.zip
 unzip zlib.zip
 
-mv curl-curl-8_5_0 "${SCRIPT_DIR}/libcurl"
+mv curl-curl-8_5_0 "${SCRIPT_DIR}/curl"
 mv mbedtls-3.5.1 "${SCRIPT_DIR}/mbedtls"
 mv zlib-1.3 "${SCRIPT_DIR}/zlib"
