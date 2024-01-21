@@ -1,6 +1,6 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2024-01-21T19:21:24+0800
+#+LASTMOD: 2024-01-21T21:46:44+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -51,15 +51,16 @@ See [[file:examples/basic.zig]], [[file:examples/advanced.zig]] for more usage.
 zig fetch --save=curl https://github.com/jiacai2050/zig-curl/archive/${COMMIT}.tar.gz
 #+end_src
 
-Replace ~${COMMIT}~ with a real one, then in your =build.zig=, access the package like this:
+Replace ~${COMMIT}~ with a real one, then in your =build.zig=, import the module like this:
 #+begin_src zig
-const dep_curl = b.dependency("curl", .{ .link_vendor = true });
+const dep_curl = b.dependency("curl", .{});
+exe.root_module.addImport("curl", dep_curl.module("curl"));
 exe.linkLibC();
 #+end_src
 
-Or this if you don't want to link to vendored libcurl
+This library will link to a vendored libcurl by default, you can disable it and link to system-wide like this
 #+begin_src zig
-const dep_curl = b.dependency("curl", .{});
+const dep_curl = b.dependency("curl", .{ .link_vendor = false });
 exe.linkSystemLibrary("curl");
 exe.linkLibC();
 #+end_src

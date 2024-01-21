@@ -9,7 +9,7 @@ const MODULE_NAME = "curl";
 pub fn build(b: *Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const link_vendor = b.option(bool, "link_vendor", "Whether link with vendored libcurl") orelse false;
+    const link_vendor = b.option(bool, "link_vendor", "Whether link to vendored libcurl (default: true)") orelse true;
 
     const build_info = b.addOptions();
     build_info.addOption(bool, "link_vendor", link_vendor);
