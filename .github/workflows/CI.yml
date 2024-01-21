@@ -29,6 +29,7 @@ jobs:
       - name: Install deps
         run: |
           sudo apt update && sudo apt install -y valgrind libcurl4-openssl-dev
+          make prepare
       - name: Run tests
         run: |
           make test
@@ -59,6 +60,9 @@ jobs:
       - uses: goto-bus-stop/setup-zig@v1
         with:
           version: master
+      - name: Install deps
+        run: |
+          make prepare
       - name: Run examples
         run: |
           make run
