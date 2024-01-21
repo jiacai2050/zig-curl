@@ -1,6 +1,6 @@
 const std = @import("std");
-const c = @import("c.zig").c;
 const assert = @import("std").debug.assert;
+const c = @import("util.zig").c;
 
 pub const HeaderError = error{
     BadIndex,

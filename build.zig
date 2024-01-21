@@ -9,16 +9,19 @@ const MODULE_NAME = "curl";
 pub fn build(b: *Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const link_vendor = b.option(bool, "link_vendor", "Whether link with vendored libcurl");
+    const link_vendor = b.option(bool, "link_vendor", "Whether link with vendored libcurl") orelse false;
 
-    const libcurl = buildLibcurl(b, target, optimize);
+    const build_info = b.addOptions();
+    build_info.addOption(bool, "link_vendor", link_vendor);
     const module = b.addModule(MODULE_NAME, .{
         .root_source_file = .{ .path = "src/root.zig" },
     });
-    if (link_vendor) |link| {
-        if (link) {
-            module.linkLibrary(libcurl);
-        }
+    module.addOptions("build_info", build_info);
+
+    var libcurl: ?*Step.Compile = null;
+    if (link_vendor) {
+        libcurl = buildLibcurl(b, target, optimize);
+        module.linkLibrary(libcurl.?);
     }
 
     try addExample(b, "basic", module, libcurl, target, optimize);
@@ -30,8 +33,11 @@ pub fn build(b: *Build) void {
         .optimize = optimize,
     });
 
-    main_tests.linkLibrary(libcurl);
-    main_tests.linkLibC();
+    if (libcurl) |lib| {
+        main_tests.linkLibrary(lib);
+    } else {
+        main_tests.linkSystemLibrary("curl");
+    }
 
     const run_main_tests = b.addRunArtifact(main_tests);
     const test_step = b.step("test", "Run library tests");
@@ -53,7 +59,7 @@ fn addExample(
     b: *Build,
     comptime name: []const u8,
     curl_module: *Module,
-    libcurl: *Step.Compile,
+    libcurl: ?*Step.Compile,
     target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) !void {
@@ -66,7 +72,11 @@ fn addExample(
 
     b.installArtifact(exe);
     exe.root_module.addImport(MODULE_NAME, curl_module);
-    exe.linkLibrary(libcurl);
+    if (libcurl) |lib| {
+        exe.linkLibrary(lib);
+    } else {
+        exe.linkSystemLibrary("curl");
+    }
     exe.linkLibC();
 
     const run_step = b.step(

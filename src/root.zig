@@ -1,10 +1,11 @@
 const std = @import("std");
-const c = @import("c.zig").c;
+const util = @import("util.zig");
 const checkCode = @import("errors.zig").checkCode;
 
 pub const Easy = @import("easy.zig");
-pub usingnamespace Easy;
-pub usingnamespace @import("c.zig");
+pub const print_libcurl_version = util.print_libcurl_version;
+pub const url_encode = util.url_encode;
+pub const libcurl = util.c;
 
 /// This function sets up the program environment that libcurl needs.
 /// Since this function is not thread safe before libcurl 7.84.0, this function
@@ -12,12 +13,12 @@ pub usingnamespace @import("c.zig");
 /// A common place is in the beginning of the program. More see:
 /// https://curl.se/libcurl/c/curl_global_init.html
 pub fn global_init() !void {
-    try checkCode(c.curl_global_init(c.CURL_GLOBAL_ALL));
+    try checkCode(libcurl.curl_global_init(libcurl.CURL_GLOBAL_ALL));
 }
 
 /// This function releases resources acquired by curl_global_init.
 pub fn global_deinit() void {
-    c.curl_global_cleanup();
+    libcurl.curl_global_cleanup();
 }
 
 test {

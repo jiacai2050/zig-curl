@@ -70,9 +70,6 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
         },
     );
 
-    if (!curl.has_parse_header_support()) {
-        return;
-    }
     // Get response header `date`.
     const date_header = try resp.get_header("date");
     if (date_header) |h| {

@@ -1,14 +1,14 @@
-const c = @import("c.zig").c;
 const std = @import("std");
 const errors = @import("errors.zig");
 const util = @import("util.zig");
+const c = util.c;
 
 const mem = std.mem;
 const fmt = std.fmt;
 const Allocator = mem.Allocator;
 const checkCode = errors.checkCode;
 
-const has_parse_header_support = @import("c.zig").has_parse_header_support;
+const has_parse_header_support = @import("util.zig").has_parse_header_support;
 
 const Self = @This();
 
@@ -137,8 +137,9 @@ pub const MultiPart = struct {
 /// Init options for Easy handle
 pub const EasyOptions = struct {
     /// Use zig's std.crypto.Certificate.Bundle for TLS instead of libcurl's default.
-    /// Note that the builtin libcurl is compiled with mbedtls and does not include a CA bundle.
-    use_std_crypto_ca_bundle: bool = true,
+    // Note that the builtin libcurl is compiled with mbedtls and does not include a CA bundle,
+    // so this defaults to true when link_vendor is enabled.
+    use_std_crypto_ca_bundle: bool = @import("build_info").link_vendor,
     /// The maximum time in milliseconds that the entire transfer operation to take.
     default_timeout_ms: usize = 30_000,
 };
