@@ -17,3 +17,7 @@ Vagrantfile
 zig-linux*
 docs
 libroot*
+.DS_Store
+
+libs/*
+!libs/download.sh

@@ -3,14 +3,10 @@
     .version = "0.1.0",
     .paths = .{
         "src",
+        "libs",
         "build.zig",
         "build.zig.zon",
         "LICENSE",
     },
-    .dependencies = .{
-        // .libcurl = .{
-        //     .url = "https://github.com/star-tek-mb/zigcurl/archive/41379c8.tar.gz",
-        //     .hash = "1220424bef91a3ffe97980b7a45062a2c1b26c3bbcefbda301419ad14c3641abcf57",
-        // },
-    },
+    .dependencies = .{},
 }

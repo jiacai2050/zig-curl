@@ -1,6 +1,6 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2023-12-23T11:51:43+0800
+#+LASTMOD: 2024-01-21T11:56:14+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -15,9 +15,11 @@ This package is in its early stage, although the core functionality works right 
 #+end_quote
 
 The builtin libcurl consists of:
-- curl 8.1.1
-- mbedtls 3.4.0
-- zlib 1.2.13
+| lib     | commit |
+|---------+--------|
+| zlib    | [[https://github.com/madler/zlib/tree/v1.3][1.3]]    |
+| mbedtls | [[https://github.com/Mbed-TLS/mbedtls/tree/v3.5.1][3.5.1]]  |
+| libcurl | [[https://github.com/curl/curl/tree/curl-8_5_0][8.5.0]]  |
 
 * Usage
 #+begin_src zig
