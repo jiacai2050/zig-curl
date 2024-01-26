@@ -13,6 +13,7 @@ test:
 	zig build test
 
 docs:
-	zig build-lib -femit-docs src/root.zig
+	if [ ! -d zig-out ]; then mkdir zig-out; fi
+	zig build-lib --dep build_info -Mbuild_info=src/root.zig -femit-docs=zig-out/docs -fno-emit-bin
 
 .PHONY: test run docs clean prepare
