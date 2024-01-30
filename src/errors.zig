@@ -41,3 +41,17 @@ pub fn checkCode(code: c.CURLcode) !void {
 
     return error.Unexpected;
 }
+
+pub fn checkMCode(code: c.CURLMcode) !void {
+    if (code == c.CURLM_OK) {
+        return;
+    }
+
+    // https://curl.se/libcurl/c/libcurl-errors.html
+    std.log.debug("curlm err code:{d}, msg:{s}\n", .{
+        code,
+        c.curl_multi_strerror(code),
+    });
+
+    return error.Unexpected;
+}

@@ -26,6 +26,7 @@ pub fn build(b: *Build) void {
 
     try addExample(b, "basic", module, libcurl, target, optimize);
     try addExample(b, "advanced", module, libcurl, target, optimize);
+    try addExample(b, "multi", module, libcurl, target, optimize);
 
     const main_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/root.zig" },

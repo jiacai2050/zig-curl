@@ -3,6 +3,7 @@ const util = @import("util.zig");
 const checkCode = @import("errors.zig").checkCode;
 
 pub const Easy = @import("easy.zig");
+pub const Multi = @import("multi.zig");
 pub const print_libcurl_version = util.print_libcurl_version;
 pub const url_encode = util.url_encode;
 pub const libcurl = util.c;
