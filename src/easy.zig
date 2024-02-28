@@ -271,7 +271,7 @@ pub fn perform(self: Self) !Response {
     };
 }
 
-fn alloc_response_buffer(self: Self) !*Buffer {
+pub fn alloc_response_buffer(self: Self) !*Buffer {
     const buf = try self.allocator.create(Buffer);
     buf.*.allocator = self.allocator;
     buf.*.items = &[_]u8{};

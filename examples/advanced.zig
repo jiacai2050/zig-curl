@@ -40,16 +40,18 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     try easy.set_method(.PUT);
     try easy.set_verbose(true);
     try easy.set_post_fields(body);
+    const resp_buf = try easy.alloc_response_buffer();
 
-    const resp = try easy.perform();
+    var resp = try easy.perform();
+    resp.body = resp_buf;
     defer resp.deinit();
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        resp.body.items,
+        resp.body.?.items,
     });
 
-    const parsed = try std.json.parseFromSlice(Response, allocator, resp.body.items, .{
+    const parsed = try std.json.parseFromSlice(Response, allocator, resp.body.?.items, .{
         .ignore_unknown_fields = true,
     });
     defer parsed.deinit();
@@ -94,11 +96,13 @@ fn post_mutli_part(easy: Easy) !void {
     try easy.set_method(.PUT);
     try easy.set_multi_part(multi_part);
     try easy.set_verbose(true);
+    const resp_buf = try easy.alloc_response_buffer();
 
-    const resp = try easy.perform();
+    var resp = try easy.perform();
+    resp.body = resp_buf;
     defer resp.deinit();
 
-    std.debug.print("resp:{s}\n", .{resp.body.items});
+    std.debug.print("resp:{s}\n", .{resp.body.?.items});
 }
 
 pub fn main() !void {
