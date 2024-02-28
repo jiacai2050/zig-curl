@@ -11,7 +11,7 @@ fn get(allocator: Allocator, easy: Easy) !void {
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        resp.body.items,
+        resp.body.?.items,
     });
 
     const Response = struct {
@@ -20,7 +20,7 @@ fn get(allocator: Allocator, easy: Easy) !void {
         },
         method: []const u8,
     };
-    const parsed = try std.json.parseFromSlice(Response, allocator, resp.body.items, .{
+    const parsed = try std.json.parseFromSlice(Response, allocator, resp.body.?.items, .{
         .ignore_unknown_fields = true,
     });
     defer parsed.deinit();
@@ -40,7 +40,7 @@ fn post(allocator: Allocator, easy: Easy) !void {
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        resp.body.items,
+        resp.body.?.items,
     });
 
     const Response = struct {
@@ -53,7 +53,7 @@ fn post(allocator: Allocator, easy: Easy) !void {
         },
         method: []const u8,
     };
-    const parsed = try std.json.parseFromSlice(Response, allocator, resp.body.items, .{ .ignore_unknown_fields = true });
+    const parsed = try std.json.parseFromSlice(Response, allocator, resp.body.?.items, .{ .ignore_unknown_fields = true });
     defer parsed.deinit();
 
     try std.testing.expectEqualDeep(parsed.value, Response{

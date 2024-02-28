@@ -23,8 +23,8 @@ pub fn main() !void {
     const multi = try Multi.init();
     // defer multi.deinit();
 
-    try multi.addHandle(easy.handle);
-    try multi.addHandle(easy2.handle);
+    try multi.addHandle(easy);
+    try multi.addHandle(easy2);
 
     var running = true;
 
@@ -33,9 +33,8 @@ pub fn main() !void {
         running = transfer != 0;
         std.debug.print("num of transfer {any}\n", .{transfer});
 
-        var num_fds: c_int = 0;
-        const ret = c.curl_multi_poll(multi.multi, null, 0, 3000, &num_fds);
-        std.debug.print("ret = {any}123\n", .{ret});
+        const num_fds = try multi.poll(null, 3000);
+        std.debug.print("ret = {any}\n", .{num_fds});
     }
 
     running = true;
