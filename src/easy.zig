@@ -58,7 +58,7 @@ pub const Headers = struct {
 
 pub const Buffer = std.ArrayList(u8);
 pub const Response = struct {
-    body: ?*Buffer,
+    body: ?Buffer,
     status_code: i32,
 
     handle: *c.CURL,
@@ -67,12 +67,12 @@ pub const Response = struct {
     pub fn deinit(self: Response) void {
         if (self.body) |body| {
             body.deinit();
-            self.allocator.destroy(body);
+            // self.allocator.destroy(body);
         }
     }
 
     pub const Header = struct {
-        c_header: polyfill_struct_curl_header(),
+        c_header: *c.struct_curl_header,
         name: []const u8,
 
         /// Get the first value associated with the given key.
@@ -271,14 +271,17 @@ pub fn perform(self: Self) !Response {
     };
 }
 
-pub fn alloc_response_buffer(self: Self) !*Buffer {
-    const buf = try self.allocator.create(Buffer);
-    buf.*.allocator = self.allocator;
-    buf.*.items = &[_]u8{};
-    buf.*.capacity = 0;
-    errdefer self.allocator.destroy(buf);
+pub fn alloc_response_buffer(self: Self) !Buffer {
+    // const buf = try self.allocator.create(Buffer);
+    // buf.*.allocator = self.allocator;
+    // buf.*.items = &[_]u8{};
+    // buf.*.capacity = 0;
+    // errdefer self.allocator.destroy(buf);
 
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEDATA, buf));
+    const buf = Buffer.init(self.allocator);
+
+    std.debug.print("alloc {any}\n", .{buf.items.ptr});
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEDATA, &buf));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, write_callback));
 
     return buf;
@@ -288,13 +291,14 @@ pub fn alloc_response_buffer(self: Self) !*Buffer {
 pub fn get(self: Self, url: [:0]const u8) !Response {
     const resp_buffer = try self.alloc_response_buffer();
     errdefer {
-        self.allocator.destroy(resp_buffer);
+        // self.allocator.destroy(resp_buffer);
         resp_buffer.deinit();
     }
+    std.debug.print("get {any}\n", .{resp_buffer.items.ptr});
 
     try self.set_url(url);
-    var resp = try self.perform();
-    resp.body = resp_buffer;
+    const resp = try self.perform();
+    // resp.body = resp_buffer;
     return resp;
 }
 
@@ -310,7 +314,7 @@ pub fn head(self: Self, url: [:0]const u8) !Response {
 pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, body: []const u8) !Response {
     const resp_buffer = try self.alloc_response_buffer();
     errdefer {
-        self.allocator.destroy(resp_buffer);
+        // self.allocator.destroy(resp_buffer);
         resp_buffer.deinit();
     }
 
@@ -333,6 +337,8 @@ fn write_callback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyo
     const real_size = size * nmemb;
 
     var buffer: *Buffer = @alignCast(@ptrCast(user_data));
+    std.debug.print("write callback {any}\n", .{buffer.items.ptr});
+
     var typed_data: [*]u8 = @ptrCast(ptr);
     buffer.appendSlice(typed_data[0..real_size]) catch return 0;
 
@@ -349,15 +355,4 @@ pub fn set_common_opts(self: Self) !void {
         try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CAINFO_BLOB, blob));
     }
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_TIMEOUT_MS, self.timeout_ms));
-}
-
-pub fn polyfill_struct_curl_header() type {
-    if (has_parse_header_support()) {
-        return *c.struct_curl_header;
-    } else {
-        // return a dummy struct to make it compile on old version.
-        return struct {
-            value: [:0]const u8,
-        };
-    }
 }
