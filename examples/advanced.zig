@@ -40,10 +40,12 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     try easy.set_method(.PUT);
     try easy.set_verbose(true);
     try easy.set_post_fields(body);
-    const resp_buf = try easy.alloc_response_buffer();
+    var buf = curl.Buffer.init(allocator);
+    try easy.set_writedata(&buf);
+    try easy.set_writefunction(curl.bufferWriteCallback);
 
     var resp = try easy.perform();
-    resp.body = resp_buf;
+    resp.body = buf;
     defer resp.deinit();
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
@@ -96,10 +98,12 @@ fn post_mutli_part(easy: Easy) !void {
     try easy.set_method(.PUT);
     try easy.set_multi_part(multi_part);
     try easy.set_verbose(true);
-    const resp_buf = try easy.alloc_response_buffer();
+    var buf = curl.Buffer.init(easy.allocator);
+    try easy.set_writedata(&buf);
+    try easy.set_writefunction(curl.bufferWriteCallback);
 
     var resp = try easy.perform();
-    resp.body = resp_buf;
+    resp.body = buf;
     defer resp.deinit();
 
     std.debug.print("resp:{s}\n", .{resp.body.?.items});

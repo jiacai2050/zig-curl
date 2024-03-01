@@ -6,30 +6,30 @@ const curl = @import("curl");
 const Easy = curl.Easy;
 
 fn get(allocator: Allocator, easy: Easy) !void {
-    _ = allocator;
     const resp = try easy.get("https://httpbin.org/anything");
     defer resp.deinit();
 
+    const body = resp.body.?.items;
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        resp.body.?.items,
+        body,
     });
 
-    // const Response = struct {
-    //     headers: struct {
-    //         Host: []const u8,
-    //     },
-    //     method: []const u8,
-    // };
-    // const parsed = try std.json.parseFromSlice(Response, allocator, resp.body.?.items, .{
-    //     .ignore_unknown_fields = true,
-    // });
-    // defer parsed.deinit();
+    const Response = struct {
+        headers: struct {
+            Host: []const u8,
+        },
+        method: []const u8,
+    };
+    const parsed = try std.json.parseFromSlice(Response, allocator, body, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
 
-    // try std.testing.expectEqualDeep(parsed.value, Response{
-    //     .headers = .{ .Host = "httpbin.org" },
-    //     .method = "GET",
-    // });
+    try std.testing.expectEqualDeep(parsed.value, Response{
+        .headers = .{ .Host = "httpbin.org" },
+        .method = "GET",
+    });
 }
 
 fn post(allocator: Allocator, easy: Easy) !void {
@@ -75,6 +75,6 @@ pub fn main() !void {
     println("GET demo");
     try get(allocator, easy);
 
-    // println("POST demo");
-    // try post(allocator, easy);
+    println("POST demo");
+    try post(allocator, easy);
 }
