@@ -17,13 +17,13 @@ pub fn main() !void {
     const easy = try Easy.init(allocator, .{
         .ca_bundle = ca_bundle,
     });
-    try easy.set_url("http://httpbin.org/headers");
+    try easy.setUrl("http://httpbin.org/headers");
     defer easy.deinit();
 
     const easy2 = try Easy.init(allocator, .{
         .ca_bundle = ca_bundle,
     });
-    try easy2.set_url("http://httpbin.org/ip");
+    try easy2.setUrl("http://httpbin.org/ip");
     defer easy2.deinit();
 
     const multi = try Multi.init();

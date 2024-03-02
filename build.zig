@@ -11,12 +11,9 @@ pub fn build(b: *Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const link_vendor = b.option(bool, "link_vendor", "Whether link to vendored libcurl (default: true)") orelse true;
 
-    const build_info = b.addOptions();
-    build_info.addOption(bool, "link_vendor", link_vendor);
     const module = b.addModule(MODULE_NAME, .{
         .root_source_file = .{ .path = "src/root.zig" },
     });
-    module.addOptions("build_info", build_info);
 
     var libcurl: ?*Step.Compile = null;
     if (link_vendor) {

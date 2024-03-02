@@ -79,7 +79,7 @@ pub const Response = struct {
     };
 
     /// Gets the header associated with the given name.
-    pub fn get_header(self: Response, name: [:0]const u8) errors.HeaderError!?Header {
+    pub fn getHeader(self: Response, name: [:0]const u8) errors.HeaderError!?Header {
         if (comptime !has_parse_header_support()) {
             return error.NoCurlHeaderSupport;
         }
@@ -135,10 +135,9 @@ pub const MultiPart = struct {
 
 /// Init options for Easy handle
 pub const EasyOptions = struct {
-    /// Use zig's std.crypto.Certificate.Bundle for TLS instead of libcurl's default.
-    // Note that the builtin libcurl is compiled with mbedtls and does not include a CA bundle,
-    // so this defaults to true when link_vendor is enabled.
-    use_std_crypto_ca_bundle: bool = @import("build_info").link_vendor,
+    // Note that the vendored libcurl is compiled with mbedtls and does not include a CA bundle,
+    // so this should be set when link with vendored libcurl, otherwise https
+    // requests will fail.
     ca_bundle: ?Buffer = null,
     /// The maximum time in milliseconds that the entire transfer operation to take.
     default_timeout_ms: usize = 30_000,
@@ -160,11 +159,11 @@ pub fn deinit(self: Self) void {
     c.curl_easy_cleanup(self.handle);
 }
 
-pub fn create_headers(self: Self) !Headers {
+pub fn createHeaders(self: Self) !Headers {
     return Headers.init(self.allocator);
 }
 
-pub fn create_multi_part(self: Self) !MultiPart {
+pub fn createMultiPart(self: Self) !MultiPart {
     return if (c.curl_mime_init(self.handle)) |h|
         .{
             .allocator = self.allocator,
@@ -174,28 +173,28 @@ pub fn create_multi_part(self: Self) !MultiPart {
         error.MimeInit;
 }
 
-pub fn set_url(self: Self, url: [:0]const u8) !void {
+pub fn setUrl(self: Self, url: [:0]const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_URL, url.ptr));
 }
 
-pub fn set_max_redirects(self: Self, redirects: u32) !void {
+pub fn setMaxRedirects(self: Self, redirects: u32) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, redirects)));
 }
 
-pub fn set_method(self: Self, method: Method) !void {
+pub fn setMethod(self: Self, method: Method) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, method.asString().ptr));
 }
 
-pub fn set_verbose(self: Self, verbose: bool) !void {
+pub fn setVerbose(self: Self, verbose: bool) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, verbose));
 }
 
-pub fn set_post_fields(self: Self, body: []const u8) !void {
+pub fn setPostFields(self: Self, body: []const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDS, body.ptr));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, body.len));
 }
 
-pub fn set_multi_part(self: Self, multi_part: MultiPart) !void {
+pub fn setMultiPart(self: Self, multi_part: MultiPart) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MIMEPOST, multi_part.mime_handle));
 }
 
@@ -203,17 +202,17 @@ pub fn reset(self: Self) void {
     c.curl_easy_reset(self.handle);
 }
 
-pub fn set_headers(self: Self, headers: Headers) !void {
+pub fn setHeaders(self: Self, headers: Headers) !void {
     if (headers.headers) |c_headers| {
         try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, c_headers));
     }
 }
 
-pub fn set_writedata(self: Self, data: *const anyopaque) !void {
+pub fn setWritedata(self: Self, data: *const anyopaque) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEDATA, data));
 }
 
-pub fn set_writefunction(
+pub fn setWritefunction(
     self: Self,
     func: *const fn ([*c]c_char, c_uint, c_uint, *anyopaque) callconv(.C) c_uint,
 ) !void {
@@ -239,9 +238,9 @@ pub fn perform(self: Self) !Response {
 /// Get issues a GET to the specified URL.
 pub fn get(self: Self, url: [:0]const u8) !Response {
     var buf = Buffer.init(self.allocator);
-    try self.set_writefunction(bufferWriteCallback);
-    try self.set_writedata(&buf);
-    try self.set_url(url);
+    try self.setWritefunction(bufferWriteCallback);
+    try self.setWritedata(&buf);
+    try self.setUrl(url);
     var resp = try self.perform();
     resp.body = buf;
     return resp;
@@ -249,8 +248,8 @@ pub fn get(self: Self, url: [:0]const u8) !Response {
 
 /// Head issues a HEAD to the specified URL.
 pub fn head(self: Self, url: [:0]const u8) !Response {
-    try self.set_url(url);
-    try self.set_method(.HEAD);
+    try self.setUrl(url);
+    try self.setMethod(.HEAD);
 
     return self.perform();
 }
@@ -258,15 +257,15 @@ pub fn head(self: Self, url: [:0]const u8) !Response {
 // /// Post issues a POST to the specified URL.
 pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, body: []const u8) !Response {
     var buf = Buffer.init(self.allocator);
-    try self.set_writefunction(bufferWriteCallback);
-    try self.set_writedata(&buf);
-    try self.set_url(url);
-    try self.set_post_fields(body);
+    try self.setWritefunction(bufferWriteCallback);
+    try self.setWritedata(&buf);
+    try self.setUrl(url);
+    try self.setPostFields(body);
 
-    var headers = try self.create_headers();
+    var headers = try self.createHeaders();
     defer headers.deinit();
     try headers.add("Content-Type", content_type);
-    try self.set_headers(headers);
+    try self.setHeaders(headers);
 
     var resp = try self.perform();
     resp.body = buf;
