@@ -7,6 +7,7 @@ const mem = std.mem;
 const fmt = std.fmt;
 const Allocator = mem.Allocator;
 const checkCode = errors.checkCode;
+const Buffer = util.Buffer;
 
 const has_parse_header_support = @import("util.zig").has_parse_header_support;
 
@@ -15,10 +16,7 @@ const Self = @This();
 allocator: Allocator,
 handle: *c.CURL,
 timeout_ms: usize,
-ca_bundle: ?[]const u8,
-
-const CERT_MARKER_BEGIN = "-----BEGIN CERTIFICATE-----";
-const CERT_MARKER_END = "\n-----END CERTIFICATE-----\n";
+ca_bundle: ?Buffer,
 
 pub const Method = enum {
     GET,
@@ -56,20 +54,21 @@ pub const Headers = struct {
     }
 };
 
-pub const Buffer = std.ArrayList(u8);
 pub const Response = struct {
-    body: Buffer,
+    body: ?Buffer,
     status_code: i32,
 
     handle: *c.CURL,
     allocator: Allocator,
 
-    pub fn deinit(self: @This()) void {
-        self.body.deinit();
+    pub fn deinit(self: Response) void {
+        if (self.body) |body| {
+            body.deinit();
+        }
     }
 
     pub const Header = struct {
-        c_header: polyfill_struct_curl_header(),
+        c_header: *c.struct_curl_header,
         name: []const u8,
 
         /// Get the first value associated with the given key.
@@ -80,7 +79,7 @@ pub const Response = struct {
     };
 
     /// Gets the header associated with the given name.
-    pub fn get_header(self: Response, name: [:0]const u8) errors.HeaderError!?Header {
+    pub fn getHeader(self: Response, name: [:0]const u8) errors.HeaderError!?Header {
         if (comptime !has_parse_header_support()) {
             return error.NoCurlHeaderSupport;
         }
@@ -119,7 +118,7 @@ pub const MultiPart = struct {
         c.curl_mime_free(self.mime_handle);
     }
 
-    pub fn add_part(self: MultiPart, name: [:0]const u8, source: DataSource) !void {
+    pub fn addPart(self: MultiPart, name: [:0]const u8, source: DataSource) !void {
         const part = if (c.curl_mime_addpart(self.mime_handle)) |part| part else return error.MimeAddPart;
 
         try checkCode(c.curl_mime_name(part, name));
@@ -136,67 +135,35 @@ pub const MultiPart = struct {
 
 /// Init options for Easy handle
 pub const EasyOptions = struct {
-    /// Use zig's std.crypto.Certificate.Bundle for TLS instead of libcurl's default.
-    // Note that the builtin libcurl is compiled with mbedtls and does not include a CA bundle,
-    // so this defaults to true when link_vendor is enabled.
-    use_std_crypto_ca_bundle: bool = @import("build_info").link_vendor,
+    // Note that the vendored libcurl is compiled with mbedtls and does not include a CA bundle,
+    // so this should be set when link with vendored libcurl, otherwise https
+    // requests will fail.
+    ca_bundle: ?Buffer = null,
     /// The maximum time in milliseconds that the entire transfer operation to take.
     default_timeout_ms: usize = 30_000,
 };
 
 pub fn init(allocator: Allocator, options: EasyOptions) !Self {
-    const ca_bundle = blk: {
-        if (options.use_std_crypto_ca_bundle) {
-            var bundle: std.crypto.Certificate.Bundle = .{};
-            defer bundle.deinit(allocator);
-
-            try bundle.rescan(allocator);
-            var blob = std.ArrayList(u8).init(allocator);
-            var iter = bundle.map.iterator();
-            while (iter.next()) |entry| {
-                const der = try std.crypto.Certificate.der.Element.parse(bundle.bytes.items, entry.value_ptr.*);
-                const cert = bundle.bytes.items[entry.value_ptr.*..der.slice.end];
-                const encoded = try util.encode_base64(allocator, cert);
-                defer allocator.free(encoded);
-
-                try blob.ensureUnusedCapacity(CERT_MARKER_BEGIN.len + CERT_MARKER_END.len + encoded.len);
-                try blob.appendSlice(CERT_MARKER_BEGIN);
-                for (encoded, 0..) |char, n| {
-                    if (n % 64 == 0) try blob.append('\n');
-                    try blob.append(char);
-                }
-                try blob.appendSlice(CERT_MARKER_END);
-            }
-            break :blk try blob.toOwnedSlice();
-        } else {
-            break :blk null;
-        }
-    };
-
     return if (c.curl_easy_init()) |handle|
         .{
             .allocator = allocator,
             .handle = handle,
             .timeout_ms = options.default_timeout_ms,
-            .ca_bundle = ca_bundle,
+            .ca_bundle = options.ca_bundle,
         }
     else
         error.CurlInit;
 }
 
 pub fn deinit(self: Self) void {
-    if (self.ca_bundle) |bundle| {
-        self.allocator.free(bundle);
-    }
-
     c.curl_easy_cleanup(self.handle);
 }
 
-pub fn create_headers(self: Self) !Headers {
+pub fn createHeaders(self: Self) !Headers {
     return Headers.init(self.allocator);
 }
 
-pub fn create_multi_part(self: Self) !MultiPart {
+pub fn createMultiPart(self: Self) !MultiPart {
     return if (c.curl_mime_init(self.handle)) |h|
         .{
             .allocator = self.allocator,
@@ -206,28 +173,28 @@ pub fn create_multi_part(self: Self) !MultiPart {
         error.MimeInit;
 }
 
-pub fn set_url(self: Self, url: [:0]const u8) !void {
+pub fn setUrl(self: Self, url: [:0]const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_URL, url.ptr));
 }
 
-pub fn set_max_redirects(self: Self, redirects: u32) !void {
+pub fn setMaxRedirects(self: Self, redirects: u32) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, redirects)));
 }
 
-pub fn set_method(self: Self, method: Method) !void {
+pub fn setMethod(self: Self, method: Method) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, method.asString().ptr));
 }
 
-pub fn set_verbose(self: Self, verbose: bool) !void {
+pub fn setVerbose(self: Self, verbose: bool) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, verbose));
 }
 
-pub fn set_post_fields(self: Self, body: []const u8) !void {
+pub fn setPostFields(self: Self, body: []const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDS, body.ptr));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, body.len));
 }
 
-pub fn set_multi_part(self: Self, multi_part: MultiPart) !void {
+pub fn setMultiPart(self: Self, multi_part: MultiPart) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MIMEPOST, multi_part.mime_handle));
 }
 
@@ -235,21 +202,26 @@ pub fn reset(self: Self) void {
     c.curl_easy_reset(self.handle);
 }
 
-pub fn set_headers(self: Self, headers: Headers) !void {
+pub fn setHeaders(self: Self, headers: Headers) !void {
     if (headers.headers) |c_headers| {
         try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, c_headers));
     }
 }
 
+pub fn setWritedata(self: Self, data: *const anyopaque) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEDATA, data));
+}
+
+pub fn setWritefunction(
+    self: Self,
+    func: *const fn ([*c]c_char, c_uint, c_uint, *anyopaque) callconv(.C) c_uint,
+) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, func));
+}
+
 /// Perform sends an HTTP request and returns an HTTP response.
 pub fn perform(self: Self) !Response {
-    try self.set_common_opts();
-
-    var resp_buffer = Buffer.init(self.allocator);
-    errdefer resp_buffer.deinit();
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEDATA, &resp_buffer));
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, write_callback));
-
+    try self.setCommonOpts();
     try checkCode(c.curl_easy_perform(self.handle));
 
     var status_code: c_long = 0;
@@ -257,71 +229,68 @@ pub fn perform(self: Self) !Response {
 
     return .{
         .status_code = @intCast(status_code),
-        .body = resp_buffer,
         .handle = self.handle,
+        .body = null,
         .allocator = self.allocator,
     };
 }
 
 /// Get issues a GET to the specified URL.
 pub fn get(self: Self, url: [:0]const u8) !Response {
-    try self.set_url(url);
-    return self.perform();
+    var buf = Buffer.init(self.allocator);
+    try self.setWritefunction(bufferWriteCallback);
+    try self.setWritedata(&buf);
+    try self.setUrl(url);
+    var resp = try self.perform();
+    resp.body = buf;
+    return resp;
 }
 
 /// Head issues a HEAD to the specified URL.
 pub fn head(self: Self, url: [:0]const u8) !Response {
-    try self.set_url(url);
-    try self.set_method(.HEAD);
+    try self.setUrl(url);
+    try self.setMethod(.HEAD);
 
     return self.perform();
 }
 
 // /// Post issues a POST to the specified URL.
 pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, body: []const u8) !Response {
-    try self.set_url(url);
-    try self.set_post_fields(body);
+    var buf = Buffer.init(self.allocator);
+    try self.setWritefunction(bufferWriteCallback);
+    try self.setWritedata(&buf);
+    try self.setUrl(url);
+    try self.setPostFields(body);
 
-    var headers = try self.create_headers();
+    var headers = try self.createHeaders();
     defer headers.deinit();
-
     try headers.add("Content-Type", content_type);
+    try self.setHeaders(headers);
 
-    try self.set_headers(headers);
-    return self.perform();
+    var resp = try self.perform();
+    resp.body = buf;
+    return resp;
 }
 
-/// Used for https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION.html
+/// Used for write response via `Buffer` type.
+// https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION.html
 // size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata);
-fn write_callback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
+pub fn bufferWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
     const real_size = size * nmemb;
-
     var buffer: *Buffer = @alignCast(@ptrCast(user_data));
     var typed_data: [*]u8 = @ptrCast(ptr);
     buffer.appendSlice(typed_data[0..real_size]) catch return 0;
-
     return real_size;
 }
 
-fn set_common_opts(self: Self) !void {
+pub fn setCommonOpts(self: Self) !void {
     if (self.ca_bundle) |bundle| {
         const blob = c.curl_blob{
-            .data = @constCast(bundle.ptr),
-            .len = bundle.len,
+            .data = @constCast(bundle.items.ptr),
+            .len = bundle.items.len,
             .flags = c.CURL_BLOB_NOCOPY,
         };
         try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CAINFO_BLOB, blob));
     }
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_TIMEOUT_MS, self.timeout_ms));
-}
-
-pub fn polyfill_struct_curl_header() type {
-    if (has_parse_header_support()) {
-        return *c.struct_curl_header;
-    } else {
-        // return a dummy struct to make it compile on old version.
-        return struct {
-            value: [:0]const u8,
-        };
-    }
 }

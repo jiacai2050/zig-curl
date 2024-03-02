@@ -20,13 +20,13 @@ const Response = struct {
     url: []const u8,
 };
 
-fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
+fn putWithCustomHeader(allocator: Allocator, easy: Easy) !void {
     const body =
         \\ {"name": "John", "age": 15}
     ;
 
     const headers = blk: {
-        var h = try easy.create_headers();
+        var h = try easy.createHeaders();
         errdefer h.deinit();
         try h.add("content-type", "application/json");
         try h.add("user-agent", UA);
@@ -35,21 +35,25 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     };
     defer headers.deinit();
 
-    try easy.set_url("https://httpbin.org/anything/zig-curl");
-    try easy.set_headers(headers);
-    try easy.set_method(.PUT);
-    try easy.set_verbose(true);
-    try easy.set_post_fields(body);
+    try easy.setUrl("https://httpbin.org/anything/zig-curl");
+    try easy.setHeaders(headers);
+    try easy.setMethod(.PUT);
+    try easy.setVerbose(true);
+    try easy.setPostFields(body);
+    var buf = curl.Buffer.init(allocator);
+    try easy.setWritedata(&buf);
+    try easy.setWritefunction(curl.bufferWriteCallback);
 
-    const resp = try easy.perform();
+    var resp = try easy.perform();
+    resp.body = buf;
     defer resp.deinit();
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        resp.body.items,
+        resp.body.?.items,
     });
 
-    const parsed = try std.json.parseFromSlice(Response, allocator, resp.body.items, .{
+    const parsed = try std.json.parseFromSlice(Response, allocator, resp.body.?.items, .{
         .ignore_unknown_fields = true,
     });
     defer parsed.deinit();
@@ -71,7 +75,7 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     );
 
     // Get response header `date`.
-    const date_header = try resp.get_header("date");
+    const date_header = try resp.getHeader("date");
     if (date_header) |h| {
         std.debug.print("date header: {s}\n", .{h.get()});
     } else {
@@ -79,26 +83,30 @@ fn put_with_custom_header(allocator: Allocator, easy: Easy) !void {
     }
 }
 
-fn post_mutli_part(easy: Easy) !void {
+fn postMutliPart(easy: Easy) !void {
     // Reset old options, e.g. headers.
     easy.reset();
 
-    const multi_part = try easy.create_multi_part();
-    try multi_part.add_part("foo", .{ .data = "hello foo" });
-    try multi_part.add_part("bar", .{ .data = "hello bar" });
-    try multi_part.add_part("build.zig", .{ .file = "build.zig" });
-    try multi_part.add_part("readme", .{ .file = "README.org" });
+    const multi_part = try easy.createMultiPart();
+    try multi_part.addPart("foo", .{ .data = "hello foo" });
+    try multi_part.addPart("bar", .{ .data = "hello bar" });
+    try multi_part.addPart("build.zig", .{ .file = "build.zig" });
+    try multi_part.addPart("readme", .{ .file = "README.org" });
     defer multi_part.deinit();
 
-    try easy.set_url("https://httpbin.org/anything/mp");
-    try easy.set_method(.PUT);
-    try easy.set_multi_part(multi_part);
-    try easy.set_verbose(true);
+    try easy.setUrl("https://httpbin.org/anything/mp");
+    try easy.setMethod(.PUT);
+    try easy.setMultiPart(multi_part);
+    try easy.setVerbose(true);
+    var buf = curl.Buffer.init(easy.allocator);
+    try easy.setWritedata(&buf);
+    try easy.setWritefunction(curl.bufferWriteCallback);
 
-    const resp = try easy.perform();
+    var resp = try easy.perform();
+    resp.body = buf;
     defer resp.deinit();
 
-    std.debug.print("resp:{s}\n", .{resp.body.items});
+    std.debug.print("resp:{s}\n", .{resp.body.?.items});
 }
 
 pub fn main() !void {
@@ -106,12 +114,16 @@ pub fn main() !void {
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const easy = try Easy.init(allocator, .{});
+    const ca_bundle = try curl.allocCABundle(allocator);
+    defer ca_bundle.deinit();
+    const easy = try Easy.init(allocator, .{
+        .ca_bundle = ca_bundle,
+    });
     defer easy.deinit();
 
-    curl.print_libcurl_version();
+    curl.printLibcurlVersion();
 
     println("PUT with custom header demo");
-    try put_with_custom_header(allocator, easy);
-    try post_mutli_part(easy);
+    try putWithCustomHeader(allocator, easy);
+    try postMutliPart(easy);
 }

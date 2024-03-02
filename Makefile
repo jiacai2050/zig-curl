@@ -8,6 +8,7 @@ clean:
 run:
 	zig build run-basic -freference-trace
 	zig build run-advanced -freference-trace
+	zig build run-multi -freference-trace
 
 test:
 	zig build test

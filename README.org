@@ -1,6 +1,6 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2024-01-26T22:07:12+0800
+#+LASTMOD: 2024-03-02T20:57:50+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -66,7 +66,7 @@ exe.linkLibC();
 #+end_src
 
 * Roadmap
-- [ ] Currently only easy API is supported, support [[https://curl.se/libcurl/c/libcurl-multi.html][multi API]].
+- [x] Currently only easy API is supported, support [[https://curl.se/libcurl/c/libcurl-multi.html][multi API]].
 
 * License
 [[file:LICENSE][MIT]]
