@@ -2,9 +2,9 @@ const std = @import("std");
 const util = @import("util.zig");
 const checkCode = @import("errors.zig").checkCode;
 
-pub const Easy = @import("easy.zig");
+pub const Easy = @import("Easy.zig");
 pub const Buffer = Easy.Buffer;
-pub const Multi = @import("multi.zig");
+pub const Multi = @import("Multi.zig");
 pub const bufferWriteCallback = Easy.bufferWriteCallback;
 pub const print_libcurl_version = util.print_libcurl_version;
 pub const url_encode = util.url_encode;
