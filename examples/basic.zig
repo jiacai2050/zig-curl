@@ -69,7 +69,11 @@ pub fn main() !void {
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const easy = try Easy.init(allocator, .{});
+    const ca_bundle = try curl.allocCABundle(allocator);
+    defer ca_bundle.deinit();
+    const easy = try Easy.init(allocator, .{
+        .ca_bundle = ca_bundle,
+    });
     defer easy.deinit();
 
     println("GET demo");

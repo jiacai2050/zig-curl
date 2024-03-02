@@ -4,6 +4,7 @@ pub const c = @cImport({
 });
 const Allocator = std.mem.Allocator;
 const Encoder = std.base64.standard.Encoder;
+pub const Buffer = std.ArrayList(u8);
 
 pub fn encode_base64(allocator: Allocator, input: []const u8) ![]const u8 {
     const encoded_len = Encoder.calcSize(input.len);
@@ -12,7 +13,7 @@ pub fn encode_base64(allocator: Allocator, input: []const u8) ![]const u8 {
     return Encoder.encode(dest, input);
 }
 
-pub fn print_libcurl_version() void {
+pub fn printLibcurlVersion() void {
     const v = c.curl_version_info(c.CURLVERSION_NOW);
     std.debug.print(
         \\Libcurl build info
@@ -65,7 +66,7 @@ comptime {
     }
 }
 
-pub fn url_encode(string: [:0]const u8) ?[]const u8 {
+pub fn urlEncode(string: [:0]const u8) ?[]const u8 {
     const r = c.curl_easy_escape(null, string.ptr, @intCast(string.len));
     return std.mem.sliceTo(r.?, 0);
 }
@@ -83,7 +84,35 @@ test "url encode" {
     }) |case| {
         const input = case.@"0";
         const expected = case.@"1";
-        const actual = url_encode(input);
+        const actual = urlEncode(input);
         try std.testing.expectEqualStrings(expected, actual.?);
     }
+}
+
+const CERT_MARKER_BEGIN = "-----BEGIN CERTIFICATE-----";
+const CERT_MARKER_END = "\n-----END CERTIFICATE-----\n";
+
+pub fn allocCABundle(allocator: std.mem.Allocator) !Buffer {
+    var bundle: std.crypto.Certificate.Bundle = .{};
+    defer bundle.deinit(allocator);
+
+    var blob = Buffer.init(allocator);
+    try bundle.rescan(allocator);
+    var iter = bundle.map.iterator();
+    while (iter.next()) |entry| {
+        const der = try std.crypto.Certificate.der.Element.parse(bundle.bytes.items, entry.value_ptr.*);
+        const cert = bundle.bytes.items[entry.value_ptr.*..der.slice.end];
+        const encoded = try encode_base64(allocator, cert);
+        defer allocator.free(encoded);
+
+        try blob.ensureUnusedCapacity(CERT_MARKER_BEGIN.len + CERT_MARKER_END.len + encoded.len);
+        try blob.appendSlice(CERT_MARKER_BEGIN);
+        for (encoded, 0..) |char, n| {
+            if (n % 64 == 0) try blob.append('\n');
+            try blob.append(char);
+        }
+        try blob.appendSlice(CERT_MARKER_END);
+    }
+
+    return blob;
 }

@@ -3,11 +3,12 @@ const util = @import("util.zig");
 const checkCode = @import("errors.zig").checkCode;
 
 pub const Easy = @import("Easy.zig");
-pub const Buffer = Easy.Buffer;
 pub const Multi = @import("Multi.zig");
 pub const bufferWriteCallback = Easy.bufferWriteCallback;
-pub const print_libcurl_version = util.print_libcurl_version;
-pub const url_encode = util.url_encode;
+pub const printLibcurlVersion = util.printLibcurlVersion;
+pub const urlEncode = util.urlEncode;
+pub const allocCABundle = util.allocCABundle;
+pub const Buffer = util.Buffer;
 pub const libcurl = util.c;
 
 /// This function sets up the program environment that libcurl needs.

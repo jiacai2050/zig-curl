@@ -1,7 +1,7 @@
 const std = @import("std");
 const errors = @import("errors.zig");
 const util = @import("util.zig");
-const Easy = @import("easy.zig");
+const Easy = @import("Easy.zig");
 const c = util.c;
 
 const mem = std.mem;

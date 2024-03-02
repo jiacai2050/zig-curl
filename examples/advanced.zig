@@ -88,10 +88,10 @@ fn post_mutli_part(easy: Easy) !void {
     easy.reset();
 
     const multi_part = try easy.create_multi_part();
-    try multi_part.add_part("foo", .{ .data = "hello foo" });
-    try multi_part.add_part("bar", .{ .data = "hello bar" });
-    try multi_part.add_part("build.zig", .{ .file = "build.zig" });
-    try multi_part.add_part("readme", .{ .file = "README.org" });
+    try multi_part.addPart("foo", .{ .data = "hello foo" });
+    try multi_part.addPart("bar", .{ .data = "hello bar" });
+    try multi_part.addPart("build.zig", .{ .file = "build.zig" });
+    try multi_part.addPart("readme", .{ .file = "README.org" });
     defer multi_part.deinit();
 
     try easy.set_url("https://httpbin.org/anything/mp");
@@ -114,10 +114,14 @@ pub fn main() !void {
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const easy = try Easy.init(allocator, .{});
+    const ca_bundle = try curl.allocCABundle(allocator);
+    defer ca_bundle.deinit();
+    const easy = try Easy.init(allocator, .{
+        .ca_bundle = ca_bundle,
+    });
     defer easy.deinit();
 
-    curl.print_libcurl_version();
+    curl.printLibcurlVersion();
 
     println("PUT with custom header demo");
     try put_with_custom_header(allocator, easy);

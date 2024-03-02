@@ -12,11 +12,17 @@ pub fn main() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const easy = try Easy.init(allocator, .{});
+    const ca_bundle = try curl.allocCABundle(allocator);
+    defer ca_bundle.deinit();
+    const easy = try Easy.init(allocator, .{
+        .ca_bundle = ca_bundle,
+    });
     try easy.set_url("http://httpbin.org/headers");
     defer easy.deinit();
 
-    const easy2 = try Easy.init(allocator, .{});
+    const easy2 = try Easy.init(allocator, .{
+        .ca_bundle = ca_bundle,
+    });
     try easy2.set_url("http://httpbin.org/ip");
     defer easy2.deinit();
 
