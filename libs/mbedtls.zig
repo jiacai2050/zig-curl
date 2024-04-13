@@ -13,8 +13,8 @@ pub fn create(b: *std.Build, target: ResolvedTarget, optimize: std.builtin.Optim
     lib.addIncludePath(.{ .path = "libs/mbedtls/include" });
     lib.addIncludePath(.{ .path = "libs/mbedtls/library" });
     lib.linkLibC();
-    lib.installHeadersDirectory("libs/mbedtls/include/mbedtls", "mbedtls");
-    lib.installHeadersDirectory("libs/mbedtls/include/psa", "psa");
+    lib.installHeadersDirectory(.{ .path = "libs/mbedtls/include/mbedtls" }, "mbedtls", .{});
+    lib.installHeadersDirectory(.{ .path = "libs/mbedtls/include/psa" }, "psa", .{});
 
     if (target.result.os.tag == .windows) {
         lib.linkSystemLibrary("ws2_32");

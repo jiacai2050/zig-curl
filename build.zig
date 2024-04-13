@@ -2,7 +2,6 @@ const std = @import("std");
 const Build = std.Build;
 const Step = Build.Step;
 const Module = Build.Module;
-const LazyPath = Build.LazyPath;
 
 const MODULE_NAME = "curl";
 
@@ -63,7 +62,7 @@ fn addExample(
 ) !void {
     const exe = b.addExecutable(.{
         .name = name,
-        .root_source_file = LazyPath.relative("examples/" ++ name ++ ".zig"),
+        .root_source_file = b.path("examples/" ++ name ++ ".zig"),
         .target = target,
         .optimize = optimize,
     });
