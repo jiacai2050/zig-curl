@@ -9,7 +9,7 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     lib.addCSourceFiles(.{ .files = srcs });
     lib.addIncludePath(.{ .path = "libs/curl/lib" });
     lib.addIncludePath(.{ .path = "libs/curl/include" });
-    lib.installHeadersDirectory("libs/curl/include/curl", "curl");
+    lib.installHeadersDirectory(.{ .path = "libs/curl/include/curl" }, "curl", .{});
     lib.linkLibC();
     lib.defineCMacro("BUILDING_LIBCURL", null);
     lib.defineCMacro("CURL_STATICLIB", "1");

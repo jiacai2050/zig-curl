@@ -8,8 +8,8 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     });
     lib.linkLibC();
     lib.addCSourceFiles(.{ .files = srcs, .flags = &.{"-std=c89"} });
-    lib.installHeader("libs/zlib/zlib.h", "zlib.h");
-    lib.installHeader("libs/zlib/zconf.h", "zconf.h");
+    lib.installHeader(.{ .path = "libs/zlib/zlib.h" }, "zlib.h");
+    lib.installHeader(.{ .path = "libs/zlib/zconf.h" }, "zconf.h");
     return lib;
 }
 
