@@ -1,0 +1,14 @@
+steps:
+  - name: zig
+    image: ziglings/ziglang:latest
+    pull: true
+    commands:
+      - zig version
+      - zig fmt --check .
+      - zig build run-basic -freference-trace
+      - zig build run-advanced -freference-trace
+      - zig build run-multi -freference-trace
+
+when:
+  - event: [push, cron]
+    cron: ci*
