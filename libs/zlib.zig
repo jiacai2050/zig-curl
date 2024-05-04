@@ -5,28 +5,38 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         .name = "z",
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
-    lib.linkLibC();
-    lib.addCSourceFiles(.{ .files = srcs, .flags = &.{"-std=c89"} });
-    lib.installHeader(.{ .path = "libs/zlib/zlib.h" }, "zlib.h");
-    lib.installHeader(.{ .path = "libs/zlib/zconf.h" }, "zconf.h");
+    const zlib_dep = b.dependency("zlib", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    inline for (srcs) |s| {
+        lib.addCSourceFile(.{
+            .file = zlib_dep.path(s),
+            .flags = &.{"-std=c89"},
+        });
+    }
+    lib.installHeader(zlib_dep.path("zlib.h"), "zlib.h");
+    lib.installHeader(zlib_dep.path("zconf.h"), "zconf.h");
     return lib;
 }
 
 const srcs = &.{
-    "libs/zlib/adler32.c",
-    "libs/zlib/compress.c",
-    "libs/zlib/crc32.c",
-    "libs/zlib/deflate.c",
-    "libs/zlib/gzclose.c",
-    "libs/zlib/gzlib.c",
-    "libs/zlib/gzread.c",
-    "libs/zlib/gzwrite.c",
-    "libs/zlib/inflate.c",
-    "libs/zlib/infback.c",
-    "libs/zlib/inftrees.c",
-    "libs/zlib/inffast.c",
-    "libs/zlib/trees.c",
-    "libs/zlib/uncompr.c",
-    "libs/zlib/zutil.c",
+    "adler32.c",
+    "compress.c",
+    "crc32.c",
+    "deflate.c",
+    "gzclose.c",
+    "gzlib.c",
+    "gzread.c",
+    "gzwrite.c",
+    "inflate.c",
+    "infback.c",
+    "inftrees.c",
+    "inffast.c",
+    "trees.c",
+    "uncompr.c",
+    "zutil.c",
 };
