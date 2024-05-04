@@ -6,6 +6,7 @@ const curl = @import("curl");
 const Easy = curl.Easy;
 
 fn get(allocator: Allocator, easy: Easy) !void {
+    try easy.setVerbose(true);
     const resp = try easy.get("https://httpbin.org/anything");
     defer resp.deinit();
 
@@ -36,6 +37,7 @@ fn post(allocator: Allocator, easy: Easy) !void {
     const payload =
         \\{"name": "John", "age": 15}
     ;
+    try easy.setVerbose(false);
     const resp = try easy.post("https://httpbin.org/anything", "application/json", payload);
     defer resp.deinit();
 

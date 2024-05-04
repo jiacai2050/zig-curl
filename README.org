@@ -1,6 +1,6 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2024-04-25T07:56:22+0800
+#+LASTMOD: 2024-05-04T23:28:00+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -46,8 +46,6 @@ pub fn main() !void {
 See [[file:examples/basic.zig]], [[file:examples/advanced.zig]] for more usage.
 
 * Installation
-=zig-curl= support [[https://ziglang.org/download/0.11.0/release-notes.html#Package-Management][package]] introduced in Zig 0.11.
-
 #+begin_src bash
 zig fetch --save=curl https://github.com/jiacai2050/zig-curl/archive/${COMMIT}.tar.gz
 #+end_src

@@ -11,7 +11,10 @@ pub fn build(b: *Build) void {
     const link_vendor = b.option(bool, "link_vendor", "Whether link to vendored libcurl (default: true)") orelse true;
 
     const module = b.addModule(MODULE_NAME, .{
-        .root_source_file = .{ .path = "src/root.zig" },
+        .root_source_file = b.path("src/root.zig"),
+        .link_libc = true,
+        .target = target,
+        .optimize = optimize,
     });
 
     var libcurl: ?*Step.Compile = null;
@@ -47,7 +50,6 @@ fn buildLibcurl(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.O
     const curl = @import("libs/curl.zig").create(b, target, optimize);
     curl.linkLibrary(tls);
     curl.linkLibrary(zlib);
-
     b.installArtifact(curl);
     return curl;
 }
