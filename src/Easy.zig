@@ -16,6 +16,7 @@ const Self = @This();
 allocator: Allocator,
 handle: *c.CURL,
 timeout_ms: usize,
+user_agent: [:0]const u8,
 ca_bundle: ?Buffer,
 
 pub const Method = enum {
@@ -55,7 +56,7 @@ pub const Headers = struct {
 };
 
 pub const Response = struct {
-    body: ?Buffer,
+    body: ?Buffer = null,
     status_code: i32,
 
     handle: *c.CURL,
@@ -134,22 +135,24 @@ pub const MultiPart = struct {
 };
 
 /// Init options for Easy handle
-pub const EasyOptions = struct {
+pub const Options = struct {
     // Note that the vendored libcurl is compiled with mbedtls and does not include a CA bundle,
     // so this should be set when link with vendored libcurl, otherwise https
     // requests will fail.
     ca_bundle: ?Buffer = null,
     /// The maximum time in milliseconds that the entire transfer operation to take.
     default_timeout_ms: usize = 30_000,
+    default_user_agent: [:0]const u8 = "zig-curl/0.1.0",
 };
 
-pub fn init(allocator: Allocator, options: EasyOptions) !Self {
+pub fn init(allocator: Allocator, options: Options) !Self {
     return if (c.curl_easy_init()) |handle|
         .{
             .allocator = allocator,
             .handle = handle,
-            .timeout_ms = options.default_timeout_ms,
             .ca_bundle = options.ca_bundle,
+            .timeout_ms = options.default_timeout_ms,
+            .user_agent = options.default_user_agent,
         }
     else
         error.CurlInit;
@@ -293,4 +296,5 @@ pub fn setCommonOpts(self: Self) !void {
         try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CAINFO_BLOB, blob));
     }
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_TIMEOUT_MS, self.timeout_ms));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_USERAGENT, self.user_agent.ptr));
 }

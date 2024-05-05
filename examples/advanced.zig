@@ -110,9 +110,7 @@ fn postMutliPart(easy: Easy) !void {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer if (gpa.deinit() != .ok) @panic("leak");
-    const allocator = gpa.allocator();
+    const allocator = std.heap.page_allocator;
 
     const ca_bundle = try curl.allocCABundle(allocator);
     defer ca_bundle.deinit();

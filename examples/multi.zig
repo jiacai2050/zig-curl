@@ -8,9 +8,7 @@ const Multi = curl.Multi;
 const c = curl.libcurl;
 
 pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    const allocator = std.heap.page_allocator;
 
     const ca_bundle = try curl.allocCABundle(allocator);
     defer ca_bundle.deinit();
@@ -27,7 +25,7 @@ pub fn main() !void {
     defer easy2.deinit();
 
     const multi = try Multi.init();
-    // defer multi.deinit();
+    defer multi.deinit();
 
     try multi.addHandle(easy);
     try multi.addHandle(easy2);

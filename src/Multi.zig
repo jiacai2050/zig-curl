@@ -20,7 +20,9 @@ pub fn init() !Self {
     return .{ .multi = core.? };
 }
 
-pub fn deinit() void {}
+pub fn deinit(self: Self) void {
+    _ = self;
+}
 
 /// Adds the easy handle to the multi_handle.
 /// https://curl.se/libcurl/c/curl_multi_add_handle.html
