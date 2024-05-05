@@ -5,6 +5,8 @@ const Allocator = mem.Allocator;
 const curl = @import("curl");
 const Easy = curl.Easy;
 
+const LOCAL_SERVER_ADDR = "http://localhost:8182";
+
 fn get(allocator: Allocator, easy: Easy) !void {
     try easy.setVerbose(true);
     const resp = try easy.get("https://httpbin.org/anything");
@@ -66,6 +68,27 @@ fn post(allocator: Allocator, easy: Easy) !void {
     });
 }
 
+fn upload(allocator: Allocator, easy: Easy) !void {
+    const path = "LICENSE";
+    const resp = try easy.upload(LOCAL_SERVER_ADDR ++ "/anything", path);
+    const Response = struct {
+        method: []const u8,
+        body_len: usize,
+    };
+    const parsed = try std.json.parseFromSlice(Response, allocator, resp.body.?.items, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+
+    try std.testing.expectEqualDeep(parsed.value, Response{
+        .body_len = 1086,
+        .method = "PUT",
+    });
+
+    std.debug.print("Status code: {d}\nBody: {s}\n", .{
+        resp.status_code,
+        resp.body.?.items,
+    });
+}
+
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
@@ -80,5 +103,10 @@ pub fn main() !void {
     try get(allocator, easy);
 
     println("POST demo");
+    easy.reset();
     try post(allocator, easy);
+
+    println("Upload demo");
+    easy.reset();
+    try upload(allocator, easy);
 }

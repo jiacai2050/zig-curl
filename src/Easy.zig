@@ -134,6 +134,33 @@ pub const MultiPart = struct {
     }
 };
 
+pub const Upload = struct {
+    file: std.fs.File,
+    file_len: u64,
+
+    pub fn init(path: []const u8) !Upload {
+        const file = try std.fs.cwd().openFile(path, .{});
+        const md = try file.metadata();
+        return .{ .file = file, .file_len = md.size() };
+    }
+
+    pub fn deinit(self: Upload) void {
+        self.file.close();
+    }
+
+    pub fn readFunction(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
+        const up: *Upload = @alignCast(@ptrCast(user_data));
+        const max_length = @min(size * nmemb, up.file_len);
+        var buf: [*]u8 = @ptrCast(ptr);
+        const n = up.file.read(buf[0..max_length]) catch |e| {
+            std.log.err("Upload read file failed, err:{any}\n", .{e});
+            return c.CURL_READFUNC_ABORT;
+        };
+
+        return @intCast(n);
+    }
+};
+
 /// Init options for Easy handle
 pub const Options = struct {
     // Note that the vendored libcurl is compiled with mbedtls and does not include a CA bundle,
@@ -201,6 +228,12 @@ pub fn setMultiPart(self: Self, multi_part: MultiPart) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MIMEPOST, multi_part.mime_handle));
 }
 
+pub fn setUpload(self: Self, up: *Upload) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_UPLOAD, @as(c_int, 1)));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_READFUNCTION, Upload.readFunction));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_READDATA, up));
+}
+
 pub fn reset(self: Self) void {
     c.curl_easy_reset(self.handle);
 }
@@ -257,7 +290,7 @@ pub fn head(self: Self, url: [:0]const u8) !Response {
     return self.perform();
 }
 
-// /// Post issues a POST to the specified URL.
+/// Post issues a POST to the specified URL.
 pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, body: []const u8) !Response {
     var buf = Buffer.init(self.allocator);
     try self.setWritefunction(bufferWriteCallback);
@@ -270,6 +303,21 @@ pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, body: []con
     try headers.add("Content-Type", content_type);
     try self.setHeaders(headers);
 
+    var resp = try self.perform();
+    resp.body = buf;
+    return resp;
+}
+
+/// Upload issues a PUT request to upload file.
+pub fn upload(self: Self, url: [:0]const u8, path: []const u8) !Response {
+    var up = try Upload.init(path);
+    defer up.deinit();
+
+    try self.setUpload(&up);
+    var buf = Buffer.init(self.allocator);
+    try self.setWritefunction(bufferWriteCallback);
+    try self.setWritedata(&buf);
+    try self.setUrl(url);
     var resp = try self.perform();
     resp.body = buf;
     return resp;

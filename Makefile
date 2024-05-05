@@ -5,6 +5,9 @@ prepare:
 clean:
 	rm -rf zig-cache zig-out
 
+serve:
+	cd server && go run main.go
+
 run:
 	zig build run-basic -freference-trace
 	zig build run-advanced -freference-trace

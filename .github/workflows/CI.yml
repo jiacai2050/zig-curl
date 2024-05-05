@@ -22,23 +22,32 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest]
         zig-version: [master, 0.12.0]
     steps:
       - uses: actions/checkout@v4
       - uses: goto-bus-stop/setup-zig@v2
         with:
           version: ${{ matrix.zig-version }}
-      - name: Install deps
-        run: |
-          sudo apt update && sudo apt install -y valgrind
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
       - name: Run tests
         run: |
           make test
       - name: Run examples
         run: |
+          SERVER=/tmp/echo-server
+          go build -o ${SERVER} server/main.go
+          ${SERVER} &
+          sleep 10
           make run
+      - name: Install deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt update && sudo apt install -y valgrind
       - name: Memory leak detect
+        if: matrix.os == 'ubuntu-latest'
         run: |
           zig build -Dcpu=baseline --verbose
 
@@ -47,20 +56,3 @@ jobs:
             valgrind --leak-check=full --tool=memcheck \
             --show-leak-kinds=all --error-exitcode=1 ${bin}
           done
-
-  test-macos:
-    timeout-minutes: 10
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest]
-        zig-version: [master, 0.12.0]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: goto-bus-stop/setup-zig@v1
-        with:
-          version: ${{ matrix.zig-version }}
-      - name: Run examples
-        run: |
-          make run
