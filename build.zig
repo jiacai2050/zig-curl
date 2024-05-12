@@ -74,15 +74,14 @@ fn addExample(
         .optimize = optimize,
         .link_libc = true,
     });
-
     b.installArtifact(exe);
+
     exe.root_module.addImport(MODULE_NAME, curl_module);
     if (libcurl) |lib| {
         exe.linkLibrary(lib);
     } else {
         exe.linkSystemLibrary("curl");
     }
-    exe.linkLibC();
 
     const run_step = b.step(
         "run-" ++ name,

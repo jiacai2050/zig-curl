@@ -10,28 +10,18 @@ const c = curl.libcurl;
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
-    const ca_bundle = try curl.allocCABundle(allocator);
-    defer ca_bundle.deinit();
-    const easy = try Easy.init(allocator, .{
-        .ca_bundle = ca_bundle,
-    });
-    try easy.setUrl("http://httpbin.org/headers");
-    defer easy.deinit();
-
-    const easy2 = try Easy.init(allocator, .{
-        .ca_bundle = ca_bundle,
-    });
-    try easy2.setUrl("http://httpbin.org/ip");
-    defer easy2.deinit();
-
     const multi = try Multi.init();
     defer multi.deinit();
 
+    const easy = try Easy.init(allocator, .{});
+    try easy.setUrl("http://httpbin.org/headers");
     try multi.addHandle(easy);
+
+    const easy2 = try Easy.init(allocator, .{});
+    try easy2.setUrl("http://httpbin.org/ip");
     try multi.addHandle(easy2);
 
     var running = true;
-
     while (running) {
         const transfer = try multi.perform();
         running = transfer != 0;

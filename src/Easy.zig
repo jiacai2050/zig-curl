@@ -347,6 +347,10 @@ pub fn bufferWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_da
 
 pub fn setCommonOpts(self: Self) !void {
     if (self.ca_bundle) |bundle| {
+        // https://curl.se/libcurl/c/CURLOPT_CAINFO_BLOB.html
+        if (!c.CURL_AT_LEAST_VERSION(7, 81, 0)) {
+            return error.NoCaInfoBlobSupport;
+        }
         const blob = c.curl_blob{
             .data = @constCast(bundle.items.ptr),
             .len = bundle.items.len,
