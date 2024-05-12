@@ -49,14 +49,22 @@ pub fn build(b: *Build) void {
     test_step.dependOn(&run_main_tests.step);
 }
 
-fn buildLibcurl(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) ?*Step.Compile {
-    const tls = @import("libs/mbedtls.zig").create(b, target, optimize) orelse return null;
-    const zlib = @import("libs/zlib.zig").create(b, target, optimize) orelse return null;
-    const curl = @import("libs/curl.zig").create(b, target, optimize) orelse return null;
-    curl.linkLibrary(tls);
-    curl.linkLibrary(zlib);
-    b.installArtifact(curl);
-    return curl;
+fn buildLibcurl(
+    b: *Build,
+    target: Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) ?*Step.Compile {
+    const curl = @import("libs/curl.zig").create(b, target, optimize);
+    const tls = @import("libs/mbedtls.zig").create(b, target, optimize);
+    const zlib = @import("libs/zlib.zig").create(b, target, optimize);
+    if (curl == null or tls == null or zlib == null) {
+        return null;
+    }
+
+    const libcurl = curl.?;
+    libcurl.linkLibrary(tls.?);
+    libcurl.linkLibrary(zlib.?);
+    return libcurl;
 }
 
 fn addExample(
