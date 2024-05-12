@@ -75,7 +75,10 @@ fn putWithCustomHeader(allocator: Allocator, easy: Easy) !void {
     );
 
     // Get response header `date`.
-    const date_header = try resp.getHeader("date");
+    const date_header = resp.getHeader("date") catch |err| {
+        std.debug.print("Get header error: {any}\n", .{err});
+        return;
+    };
     if (date_header) |h| {
         std.debug.print("date header: {s}\n", .{h.get()});
     } else {

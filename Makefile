@@ -1,4 +1,6 @@
 
+ARGS = ${ZIG_ARGS}
+
 prepare:
 	./libs/update.sh
 
@@ -9,12 +11,12 @@ serve:
 	cd server && go run main.go
 
 run:
-	zig build run-basic -freference-trace
-	zig build run-advanced -freference-trace
-	zig build run-multi -freference-trace
+	zig build run-basic -freference-trace $(ARGS)
+	zig build run-advanced -freference-trace $(ARGS)
+	zig build run-multi -freference-trace $(ARGS)
 
 test:
-	zig build test
+	zig build test $(ARGS)
 
 docs:
 	if [ ! -d zig-out ]; then mkdir zig-out; fi

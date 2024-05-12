@@ -68,8 +68,19 @@ pub const Response = struct {
         }
     }
 
+    fn polyfill_struct_curl_header() type {
+        if (has_parse_header_support()) {
+            return *c.struct_curl_header;
+        } else {
+            // return a dummy struct to make it compile on old version.
+            return struct {
+                value: [:0]const u8,
+            };
+        }
+    }
+
     pub const Header = struct {
-        c_header: *c.struct_curl_header,
+        c_header: polyfill_struct_curl_header(),
         name: []const u8,
 
         /// Get the first value associated with the given key.

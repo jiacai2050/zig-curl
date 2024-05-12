@@ -1,16 +1,16 @@
 const std = @import("std");
 
-pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Step.Compile {
+pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) ?*std.Build.Step.Compile {
     const lib = b.addStaticLibrary(.{
         .name = "z",
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-    const zlib_dep = b.dependency("zlib", .{
+    const zlib_dep = b.lazyDependency("zlib", .{
         .target = target,
         .optimize = optimize,
-    });
+    }) orelse return null;
 
     inline for (srcs) |s| {
         lib.addCSourceFile(.{

@@ -1,7 +1,7 @@
 const std = @import("std");
 const ResolvedTarget = std.Build.ResolvedTarget;
 
-pub fn create(b: *std.Build, target: ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Step.Compile {
+pub fn create(b: *std.Build, target: ResolvedTarget, optimize: std.builtin.OptimizeMode) ?*std.Build.Step.Compile {
     const lib = b.addStaticLibrary(.{
         .name = "mbedtls",
         .target = target,
@@ -9,10 +9,10 @@ pub fn create(b: *std.Build, target: ResolvedTarget, optimize: std.builtin.Optim
         .link_libc = true,
     });
 
-    const mbedtls_dep = b.dependency("mbedtls", .{
+    const mbedtls_dep = b.lazyDependency("mbedtls", .{
         .target = target,
         .optimize = optimize,
-    });
+    }) orelse return null;
     inline for (srcs) |s| {
         lib.addCSourceFile(.{ .file = mbedtls_dep.path(s), .flags = &.{"-std=c99"} });
     }

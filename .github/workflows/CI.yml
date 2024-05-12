@@ -16,7 +16,7 @@ on:
       - '**.yml'
 
 jobs:
-  test-linux:
+  test-vendor:
     timeout-minutes: 10
     runs-on: ${{ matrix.os }}
     strategy:
@@ -32,6 +32,52 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: 'stable'
+      - name: Run tests
+        run: |
+          make test
+      - name: Run examples
+        run: |
+          SERVER=/tmp/echo-server
+          go build -o ${SERVER} server/main.go
+          ${SERVER} &
+          sleep 10
+          make run
+      - name: Install deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt update && sudo apt install -y valgrind
+      - name: Memory leak detect
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          zig build -Dcpu=baseline --verbose
+
+          BINS=("./zig-out/bin/basic" "./zig-out/bin/advanced")
+          for bin in ${BINS[@]}; do
+            valgrind --leak-check=full --tool=memcheck \
+            --show-leak-kinds=all --error-exitcode=1 ${bin}
+          done
+
+  test-dynamic:
+    timeout-minutes: 10
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        zig-version: [master, 0.12.0]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ matrix.zig-version }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - name: Set Environment Variables
+        run: |
+          echo "ZIG_ARGS='-Dlink_vendor=false'" >> $GITHUB_ENV
+          sudo apt update && sudo apt-get install -y libcurl4-openssl-dev
+
       - name: Run tests
         run: |
           make test

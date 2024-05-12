@@ -19,8 +19,12 @@ pub fn build(b: *Build) void {
 
     var libcurl: ?*Step.Compile = null;
     if (link_vendor) {
-        libcurl = buildLibcurl(b, target, optimize);
-        module.linkLibrary(libcurl.?);
+        if (buildLibcurl(b, target, optimize)) |v| {
+            libcurl = v;
+            module.linkLibrary(v);
+        } else {
+            return;
+        }
     }
 
     try addExample(b, "basic", module, libcurl, target, optimize);
@@ -31,6 +35,7 @@ pub fn build(b: *Build) void {
         .root_source_file = .{ .path = "src/root.zig" },
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
 
     if (libcurl) |lib| {
@@ -44,10 +49,10 @@ pub fn build(b: *Build) void {
     test_step.dependOn(&run_main_tests.step);
 }
 
-fn buildLibcurl(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *Step.Compile {
-    const tls = @import("libs/mbedtls.zig").create(b, target, optimize);
-    const zlib = @import("libs/zlib.zig").create(b, target, optimize);
-    const curl = @import("libs/curl.zig").create(b, target, optimize);
+fn buildLibcurl(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) ?*Step.Compile {
+    const tls = @import("libs/mbedtls.zig").create(b, target, optimize) orelse return null;
+    const zlib = @import("libs/zlib.zig").create(b, target, optimize) orelse return null;
+    const curl = @import("libs/curl.zig").create(b, target, optimize) orelse return null;
     curl.linkLibrary(tls);
     curl.linkLibrary(zlib);
     b.installArtifact(curl);
@@ -67,6 +72,7 @@ fn addExample(
         .root_source_file = b.path("examples/" ++ name ++ ".zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
 
     b.installArtifact(exe);

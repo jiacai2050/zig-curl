@@ -13,15 +13,18 @@
             // https://github.com/curl/curl/releases/tag/curl-8_5_0
             .url = "https://github.com/curl/curl/releases/download/curl-8_5_0/curl-8.5.0.tar.gz",
             .hash = "12206e97053bf43e6bd83f2d51eefbac497a05f2eee98868431e9d228a12971e716e",
+            .lazy = true,
         },
         // https://github.com/madler/zlib/releases/tag/v1.3
         .zlib = .{
             .url = "https://github.com/madler/zlib/releases/download/v1.3/zlib-1.3.tar.gz",
             .hash = "1220c32f4f9dbcb4445c153b6a5bf1e1f697a76f6b690dda9c600357c6b7080af614",
+            .lazy = true,
         },
         .mbedtls = .{
             .url = "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v3.5.1.tar.gz",
             .hash = "1220700935566604edf3dd5491dab97c29571d1b07830e626ed31109811198fdc941",
+            .lazy = true,
         },
     },
 }
