@@ -72,8 +72,7 @@ const srcs = &.{
     "library/padlock.c",
     "library/pem.c",
     "library/pk.c",
-    // Used in 3.6.0
-    // "library/pk_ecc.c",
+    "library/pk_ecc.c",
     "library/pk_wrap.c",
     "library/pkcs12.c",
     "library/pkcs5.c",

@@ -32,7 +32,7 @@ pub fn build(b: *Build) void {
     try addExample(b, "multi", module, libcurl, target, optimize);
 
     const main_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/root.zig" },
+        .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
