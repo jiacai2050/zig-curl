@@ -23,10 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        zig-version: [master, 0.12.0]
+        zig-version: [master, 0.13.0]
     steps:
       - uses: actions/checkout@v4
-      - uses: goto-bus-stop/setup-zig@v2
+      - uses: mlugg/setup-zig@v1
         with:
           version: ${{ matrix.zig-version }}
       - uses: actions/setup-go@v5
