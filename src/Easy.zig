@@ -272,6 +272,18 @@ pub fn setWritefunction(
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, func));
 }
 
+pub fn setUser(self: Self, user: [:0]const u8) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_USERNAME, user.ptr));
+}
+
+pub fn setPassword(self: Self, password: [:0]const u8) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PASSWORD, password.ptr));
+}
+
+pub fn setURL(self: Self, url: [:0]const u8) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_URL, url.ptr));
+}
+
 /// Perform sends an HTTP request and returns an HTTP response.
 pub fn perform(self: Self) !Response {
     try self.setCommonOpts();
