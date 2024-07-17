@@ -30,7 +30,6 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     lib.defineCMacro("CURL_DISABLE_FILE", "1");
     lib.defineCMacro("CURL_DISABLE_FTP", "1");
     lib.defineCMacro("CURL_DISABLE_GOPHER", "1");
-    lib.defineCMacro("CURL_DISABLE_IMAP", "1");
     lib.defineCMacro("CURL_DISABLE_MQTT", "1");
     lib.defineCMacro("CURL_DISABLE_POP3", "1");
     lib.defineCMacro("CURL_DISABLE_RTSP", "1");
