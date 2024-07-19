@@ -8,7 +8,7 @@ clean:
 	rm -rf zig-cache zig-out
 
 serve:
-	cd server && go run main.go
+	zig run server/main.zig
 
 run:
 	zig build run-basic -freference-trace $(ARGS)
