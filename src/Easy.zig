@@ -51,7 +51,9 @@ pub const Headers = struct {
         const header = try std.fmt.allocPrintZ(self.allocator, "{s}: {s}", .{ name, value });
         defer self.allocator.free(header);
 
-        self.headers = c.curl_slist_append(self.headers, header);
+        self.headers = c.curl_slist_append(self.headers, header) orelse {
+            return errors.HeaderError.OutOfMemory;
+        };
     }
 };
 
