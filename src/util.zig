@@ -55,15 +55,14 @@ pub fn printLibcurlVersion() void {
 
 pub fn has_parse_header_support() bool {
     // `curl_header` is officially supported since 7.84.0.
-    // https://curl.se/libcurl/c/curl_easy_header.html
-    // https://ec.haxx.se/helpers/headerapi/index.html
+    // https://everything.curl.dev/helpers/headerapi/index.html
     return c.CURL_AT_LEAST_VERSION(7, 84, 0);
 }
 
 comptime {
     // `CURL_AT_LEAST_VERSION` is only available since 7.43.0
     // https://curl.se/libcurl/c/symbols-in-versions.html
-    if (!c.CURL_AT_LEAST_VERSION(7, 43, 0)) {
+    if (!@hasDecl(c, "CURL_AT_LEAST_VERSION")) {
         @compileError("Libcurl version must at least 7.43.0");
     }
 }
