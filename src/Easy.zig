@@ -350,7 +350,9 @@ pub fn bufferWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_da
 pub fn setCommonOpts(self: Self) !void {
     if (self.ca_bundle) |bundle| {
         // https://curl.se/libcurl/c/CURLOPT_CAINFO_BLOB.html
-        if (!c.CURL_AT_LEAST_VERSION(7, 81, 0)) {
+        // Different TLS backends might require higher verison of libcurl.
+        // BearSSL (since 7.79.0), mbedTLS (since 7.81.0), rustls (since 7.82.0), wolfSSL (since 8.2.0)
+        if (!c.CURL_AT_LEAST_VERSION(7, 77, 0)) {
             return error.NoCaInfoBlobSupport;
         }
         const blob = c.curl_blob{
