@@ -257,8 +257,8 @@ pub fn setHeaders(self: Self, headers: Headers) !void {
     }
 }
 
-pub fn setUnixSocketPath(self: Self, path: [*:0]const u8) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_UNIX_SOCKET_PATH, path));
+pub fn setUnixSocketPath(self: Self, path: [:0]const u8) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_UNIX_SOCKET_PATH, path.ptr));
 }
 
 pub fn setWritedata(self: Self, data: *const anyopaque) !void {
