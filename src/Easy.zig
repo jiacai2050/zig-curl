@@ -272,8 +272,8 @@ pub fn setWritefunction(
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, func));
 }
 
-pub fn setUser(self: Self, user: [:0]const u8) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_USERNAME, user.ptr));
+pub fn setUsername(self: Self, username: [:0]const u8) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_USERNAME, username.ptr));
 }
 
 pub fn setPassword(self: Self, password: [:0]const u8) !void {
