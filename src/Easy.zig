@@ -284,6 +284,10 @@ pub fn setURL(self: Self, url: [:0]const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_URL, url.ptr));
 }
 
+pub fn setCustomMessageRequest(self: Self, message: [:0]const u8) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, message.ptr));
+}
+
 /// Perform sends an HTTP request and returns an HTTP response.
 pub fn perform(self: Self) !Response {
     try self.setCommonOpts();
