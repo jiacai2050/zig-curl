@@ -10,6 +10,7 @@ pub const hasParseHeaderSupport = util.hasParseHeaderSupport;
 pub const urlEncode = util.urlEncode;
 pub const allocCABundle = util.allocCABundle;
 pub const Buffer = util.Buffer;
+/// The underlying C libcurl library.
 pub const libcurl = util.c;
 
 /// This function sets up the program environment that libcurl needs.
