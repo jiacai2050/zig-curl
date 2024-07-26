@@ -128,14 +128,17 @@ pub const Response = struct {
             if (self.c_header == null) {
                 // Slightly more efficient than `curl_easy_nextheader`.
                 if (self.name) |filter_name| {
-                    try checkCode(c.curl_easy_header(
+                    if (errors.headerErrorFrom(c.curl_easy_header(
                         self.handle,
                         filter_name.ptr,
                         0,
                         c.CURLH_HEADER,
                         request,
                         &self.c_header,
-                    ));
+                    ))) |err| return switch (err) {
+                        error.Missing => null,
+                        else => err,
+                    };
                     const c_header = self.c_header orelse unreachable;
                     return Header{
                         .c_header = c_header,
