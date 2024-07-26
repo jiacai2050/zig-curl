@@ -102,7 +102,7 @@ pub const Response = struct {
         const code = c.curl_easy_header(self.handle, name.ptr, 0, c.CURLH_HEADER, -1, &header);
         return if (errors.headerErrorFrom(code)) |err|
             switch (err) {
-                error.Missing => null,
+                error.Missing, error.NoHeaders => null,
                 else => err,
             }
         else
@@ -141,7 +141,7 @@ pub const Response = struct {
                         request,
                         &self.c_header,
                     ))) |err| return switch (err) {
-                        error.Missing => null,
+                        error.Missing, error.NoHeaders => null,
                         else => err,
                     };
                     const c_header = self.c_header orelse unreachable;
