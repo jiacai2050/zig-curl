@@ -48,6 +48,18 @@ fn iterateRedirectedHeaders(easy: Easy) !void {
             std.debug.print("  {s}: {s}\n", .{ header.name, header.get() });
         }
     }
+
+    // Iterating content-type only
+    const expected_values = [_][]const u8{ "text/html; charset=utf-8", "application/json" };
+    var count: usize = 0;
+    for (0..redirects + 1) |i| {
+        var iter = try resp.iterateHeaders(.{ .request = i, .name = "Content-Type" });
+        while (try iter.next()) |header| {
+            try std.testing.expectEqualStrings(header.get(), expected_values[count]);
+            count += 1;
+        }
+    }
+    try std.testing.expectEqual(count, 2);
 }
 
 pub fn main() !void {

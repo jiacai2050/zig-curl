@@ -99,16 +99,21 @@ pub const Response = struct {
         }
 
         var header: ?*c.struct_curl_header = null;
-        return Response.getHeaderInner(self.handle, name, &header);
+        return Response.getHeaderInner(
+            self.handle,
+            name,
+            -1, // request, -1 means last request
+            &header,
+        );
     }
 
-    fn getHeaderInner(easy: ?*c.CURL, name: [:0]const u8, hout: *?*c.struct_curl_header) errors.HeaderError!?Header {
+    fn getHeaderInner(easy: ?*c.CURL, name: [:0]const u8, request: c_int, hout: *?*c.struct_curl_header) errors.HeaderError!?Header {
         const code = c.curl_easy_header(
             easy,
             name.ptr,
             0, // index, 0 means first header
             c.CURLH_HEADER,
-            -1, // request, -1 means last request
+            request,
             hout,
         );
         return if (errors.headerErrorFrom(code)) |err| switch (err) {
@@ -140,17 +145,16 @@ pub const Response = struct {
                         return null;
                     }
                 } else {
-                    return Response.getHeaderInner(self.handle, filter_name, &self.c_header);
+                    return Response.getHeaderInner(self.handle, filter_name, request, &self.c_header);
                 }
             }
 
-            while (true) {
-                const c_header = c.curl_easy_nextheader(
-                    self.handle,
-                    c.CURLH_HEADER,
-                    request,
-                    self.c_header,
-                ) orelse return null;
+            while (c.curl_easy_nextheader(
+                self.handle,
+                c.CURLH_HEADER,
+                request,
+                self.c_header,
+            )) |c_header| {
                 self.c_header = c_header;
 
                 const name = std.mem.sliceTo(c_header.*.name, 0);
@@ -164,6 +168,8 @@ pub const Response = struct {
                     .c_header = c_header,
                     .name = name,
                 };
+            } else {
+                return null;
             }
         }
     };
