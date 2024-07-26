@@ -177,13 +177,8 @@ fn iterateRedirectedHeaders(easy: Easy) !void {
     // Reset old options, e.g. headers.
     easy.reset();
 
-    try easy.setUrl("https://httpbin.org/redirect/3");
-    var buf = curl.Buffer.init(easy.allocator);
-    try easy.setWritedata(&buf);
-    try easy.setWritefunction(curl.bufferWriteCallback);
     try easy.setFollowLocation(true);
-
-    var resp = try easy.perform();
+    const resp = try easy.get("https://httpbin.org/redirect/3");
     defer resp.deinit();
 
     const redirects = try resp.getRedirectCount();
