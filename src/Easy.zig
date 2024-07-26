@@ -99,17 +99,25 @@ pub const Response = struct {
         }
 
         var header: ?*c.struct_curl_header = null;
-        const code = c.curl_easy_header(self.handle, name.ptr, 0, c.CURLH_HEADER, -1, &header);
-        return if (errors.headerErrorFrom(code)) |err|
-            switch (err) {
-                error.Missing, error.NoHeaders => null,
-                else => err,
-            }
-        else
-            .{
-                .c_header = header.?,
-                .name = name,
-            };
+        return Response.getHeaderInner(self.handle, name, &header);
+    }
+
+    fn getHeaderInner(easy: ?*c.CURL, name: [:0]const u8, hout: *?*c.struct_curl_header) errors.HeaderError!?Header {
+        const code = c.curl_easy_header(
+            easy,
+            name.ptr,
+            0, // index, 0 means first header
+            c.CURLH_HEADER,
+            -1, // request, -1 means last request
+            hout,
+        );
+        return if (errors.headerErrorFrom(code)) |err| switch (err) {
+            error.Missing, error.NoHeaders => null,
+            else => err,
+        } else .{
+            .c_header = hout.*.?,
+            .name = name,
+        };
     }
 
     pub const HeaderIterator = struct {
@@ -127,28 +135,12 @@ pub const Response = struct {
 
             if (self.name) |filter_name| {
                 if (self.c_header) |c_header| {
-                    // Stop early.
+                    // fast path
                     if (c_header.*.index + 1 == c_header.*.amount) {
                         return null;
                     }
                 } else {
-                    // `curl_easy_header` is slightly more performant for the first header.
-                    if (errors.headerErrorFrom(c.curl_easy_header(
-                        self.handle,
-                        filter_name.ptr,
-                        0,
-                        c.CURLH_HEADER,
-                        request,
-                        &self.c_header,
-                    ))) |err| return switch (err) {
-                        error.Missing, error.NoHeaders => null,
-                        else => err,
-                    };
-                    const c_header = self.c_header orelse unreachable;
-                    return Header{
-                        .c_header = c_header,
-                        .name = std.mem.sliceTo(c_header.*.name, 0),
-                    };
+                    return Response.getHeaderInner(self.handle, filter_name, &self.c_header);
                 }
             }
 
@@ -158,9 +150,7 @@ pub const Response = struct {
                     c.CURLH_HEADER,
                     request,
                     self.c_header,
-                ) orelse {
-                    return null;
-                };
+                ) orelse return null;
                 self.c_header = c_header;
 
                 const name = std.mem.sliceTo(c_header.*.name, 0);

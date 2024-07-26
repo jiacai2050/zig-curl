@@ -116,7 +116,7 @@ fn iterateHeaders(easy: Easy) !void {
     // Reset old options, e.g. headers.
     easy.reset();
 
-    const resp = try easy.get("https://httpbin.org/response-headers?X-Foo=Hello&X-Foo=World&x-fOO=42");
+    const resp = try easy.get("https://httpbin.org/response-headers?X-Foo=1&X-Foo=2&X-Foo=3");
     defer resp.deinit();
 
     std.debug.print("Iterating all headers...\n", .{});
@@ -127,17 +127,15 @@ fn iterateHeaders(easy: Easy) !void {
         }
     }
 
-    std.debug.print("Iterating X-Foo only...\n", .{});
+    // Iterating X-Foo only
     {
-        var count: usize = 0;
-
         var iter = try resp.iterateHeaders(.{ .name = "X-Foo" });
-        while (try iter.next()) |header| {
-            std.debug.print("  {s}: {s}\n", .{ header.name, header.get() });
-            count += 1;
+        const expected_values = .{ "1", "2", "3" };
+        inline for (expected_values) |expected| {
+            const header = try iter.next() orelse unreachable;
+            try std.testing.expectEqualStrings(header.get(), expected);
         }
-
-        try std.testing.expect(count == 3);
+        try std.testing.expect((try iter.next()) == null);
     }
 }
 
@@ -146,11 +144,11 @@ fn iterateRedirectedHeaders(easy: Easy) !void {
     easy.reset();
 
     try easy.setFollowLocation(true);
-    const resp = try easy.get("https://httpbin.org/redirect/3");
+    const resp = try easy.get("https://httpbin.org/redirect/1");
     defer resp.deinit();
 
     const redirects = try resp.getRedirectCount();
-    std.debug.print("Redirected {} times.\n", .{redirects});
+    try std.testing.expectEqual(redirects, 1);
 
     for (0..redirects + 1) |i| {
         std.debug.print("Request #{} headers:\n", .{i});
