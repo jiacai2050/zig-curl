@@ -9,7 +9,7 @@ const Allocator = mem.Allocator;
 const checkCode = errors.checkCode;
 const Buffer = util.Buffer;
 
-const has_parse_header_support = @import("util.zig").has_parse_header_support;
+const hasParseHeaderSupport = @import("util.zig").hasParseHeaderSupport;
 
 const Self = @This();
 
@@ -71,7 +71,7 @@ pub const Response = struct {
     }
 
     fn polyfill_struct_curl_header() type {
-        if (has_parse_header_support()) {
+        if (hasParseHeaderSupport()) {
             return c.struct_curl_header;
         } else {
             // return a dummy struct to make it compile on old version.
@@ -94,7 +94,7 @@ pub const Response = struct {
 
     /// Gets the header associated with the given name.
     pub fn getHeader(self: Response, name: [:0]const u8) errors.HeaderError!?Header {
-        if (comptime !has_parse_header_support()) {
+        if (comptime !hasParseHeaderSupport()) {
             return error.NoCurlHeaderSupport;
         }
 
@@ -127,7 +127,7 @@ pub const Response = struct {
         c_header: ?*polyfill_struct_curl_header() = null,
 
         pub fn next(self: *HeaderIterator) !?Header {
-            if (comptime !has_parse_header_support()) {
+            if (comptime !hasParseHeaderSupport()) {
                 return error.NoCurlHeaderSupport;
             }
 
@@ -177,9 +177,10 @@ pub const Response = struct {
     };
 
     pub fn iterateHeaders(self: Response, options: IterateHeadersOptions) errors.HeaderError!HeaderIterator {
-        if (comptime !has_parse_header_support()) {
+        if (comptime !hasParseHeaderSupport()) {
             return error.NoCurlHeaderSupport;
         }
+
         return HeaderIterator{
             .handle = self.handle,
             .name = options.name,

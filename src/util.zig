@@ -53,7 +53,7 @@ pub fn printLibcurlVersion() void {
     }
 }
 
-pub fn has_parse_header_support() bool {
+pub fn hasParseHeaderSupport() bool {
     // `curl_header` is officially supported since 7.84.0.
     // https://everything.curl.dev/helpers/headerapi/index.html
     return c.CURL_AT_LEAST_VERSION(7, 84, 0);

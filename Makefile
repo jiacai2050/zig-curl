@@ -14,6 +14,7 @@ run:
 	zig build run-basic -freference-trace $(ARGS)
 	zig build run-advanced -freference-trace $(ARGS)
 	zig build run-multi -freference-trace $(ARGS)
+	zig build run-header -freference-trace $(ARGS)
 
 test:
 	zig build test $(ARGS)
