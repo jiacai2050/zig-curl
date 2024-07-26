@@ -17,12 +17,12 @@ pub const libcurl = util.c;
 /// must be called before the program calls any other function in libcurl.
 /// A common place is in the beginning of the program. More see:
 /// https://curl.se/libcurl/c/curl_global_init.html
-pub fn global_init() !void {
+pub fn globalInit() !void {
     try checkCode(libcurl.curl_global_init(libcurl.CURL_GLOBAL_ALL));
 }
 
 /// This function releases resources acquired by curl_global_init.
-pub fn global_deinit() void {
+pub fn globalDeinit() void {
     libcurl.curl_global_cleanup();
 }
 
