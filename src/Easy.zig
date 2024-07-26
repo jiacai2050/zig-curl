@@ -72,7 +72,7 @@ pub const Response = struct {
 
     fn polyfill_struct_curl_header() type {
         if (has_parse_header_support()) {
-            return *c.struct_curl_header;
+            return c.struct_curl_header;
         } else {
             // return a dummy struct to make it compile on old version.
             return struct {
@@ -82,7 +82,7 @@ pub const Response = struct {
     }
 
     pub const Header = struct {
-        c_header: polyfill_struct_curl_header(),
+        c_header: *polyfill_struct_curl_header(),
         name: []const u8,
 
         /// Get the first value associated with the given key.
@@ -99,17 +99,98 @@ pub const Response = struct {
         }
 
         var header: ?*c.struct_curl_header = null;
-        const code = c.curl_easy_header(self.handle, name.ptr, 0, c.CURLH_HEADER, -1, &header);
-        return if (errors.headerErrorFrom(code)) |err|
-            switch (err) {
-                error.Missing => null,
-                else => err,
+        return Response.getHeaderInner(self.handle, name, &header);
+    }
+
+    fn getHeaderInner(easy: ?*c.CURL, name: [:0]const u8, hout: *?*c.struct_curl_header) errors.HeaderError!?Header {
+        const code = c.curl_easy_header(
+            easy,
+            name.ptr,
+            0, // index, 0 means first header
+            c.CURLH_HEADER,
+            -1, // request, -1 means last request
+            hout,
+        );
+        return if (errors.headerErrorFrom(code)) |err| switch (err) {
+            error.Missing, error.NoHeaders => null,
+            else => err,
+        } else .{
+            .c_header = hout.*.?,
+            .name = name,
+        };
+    }
+
+    pub const HeaderIterator = struct {
+        handle: *c.CURL,
+        name: ?[:0]const u8,
+        request: ?usize,
+        c_header: ?*polyfill_struct_curl_header() = null,
+
+        pub fn next(self: *HeaderIterator) !?Header {
+            if (comptime !has_parse_header_support()) {
+                return error.NoCurlHeaderSupport;
             }
-        else
-            .{
-                .c_header = header.?,
-                .name = name,
-            };
+
+            const request: c_int = if (self.request) |v| @intCast(v) else -1;
+
+            if (self.name) |filter_name| {
+                if (self.c_header) |c_header| {
+                    // fast path
+                    if (c_header.*.index + 1 == c_header.*.amount) {
+                        return null;
+                    }
+                } else {
+                    return Response.getHeaderInner(self.handle, filter_name, &self.c_header);
+                }
+            }
+
+            while (true) {
+                const c_header = c.curl_easy_nextheader(
+                    self.handle,
+                    c.CURLH_HEADER,
+                    request,
+                    self.c_header,
+                ) orelse return null;
+                self.c_header = c_header;
+
+                const name = std.mem.sliceTo(c_header.*.name, 0);
+                if (self.name) |filter_name| {
+                    if (!std.ascii.eqlIgnoreCase(name, filter_name)) {
+                        continue;
+                    }
+                }
+
+                return Header{
+                    .c_header = c_header,
+                    .name = name,
+                };
+            }
+        }
+    };
+
+    pub const IterateHeadersOptions = struct {
+        /// Only iterate over headers matching a specific name.
+        name: ?[:0]const u8 = null,
+        /// Which request you want headers from. Useful when there are redirections.
+        /// Leaving `null` means the last request.
+        request: ?usize = null,
+    };
+
+    pub fn iterateHeaders(self: Response, options: IterateHeadersOptions) errors.HeaderError!HeaderIterator {
+        if (comptime !has_parse_header_support()) {
+            return error.NoCurlHeaderSupport;
+        }
+        return HeaderIterator{
+            .handle = self.handle,
+            .name = options.name,
+            .request = options.request,
+        };
+    }
+
+    pub fn getRedirectCount(self: Response) !usize {
+        var redirects: c_long = undefined;
+        try checkCode(c.curl_easy_getinfo(self.handle, c.CURLINFO_REDIRECT_COUNT, &redirects));
+        return @intCast(redirects);
     }
 };
 
@@ -245,6 +326,11 @@ pub fn setUpload(self: Self, up: *Upload) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_UPLOAD, @as(c_int, 1)));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_READFUNCTION, Upload.readFunction));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_READDATA, up));
+}
+
+pub fn setFollowLocation(self: Self, enable: bool) !void {
+    const param: c_long = @intCast(@intFromBool(enable));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_FOLLOWLOCATION, param));
 }
 
 pub fn reset(self: Self) void {
