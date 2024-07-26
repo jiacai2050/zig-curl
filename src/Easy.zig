@@ -125,9 +125,14 @@ pub const Response = struct {
 
             const request: c_int = if (self.request) |v| @intCast(v) else -1;
 
-            if (self.c_header == null) {
-                // Slightly more efficient than `curl_easy_nextheader`.
-                if (self.name) |filter_name| {
+            if (self.name) |filter_name| {
+                if (self.c_header) |c_header| {
+                    // Stop early.
+                    if (c_header.*.index + 1 == c_header.*.amount) {
+                        return null;
+                    }
+                } else {
+                    // `curl_easy_header` is slightly more performant for the first header.
                     if (errors.headerErrorFrom(c.curl_easy_header(
                         self.handle,
                         filter_name.ptr,
