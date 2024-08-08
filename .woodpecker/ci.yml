@@ -1,13 +1,15 @@
 steps:
   - name: zig
-    image: ziglings/ziglang:latest
-    pull: true
+    image: ghcr.io/jiacai2050/playground:zig-20240808-b5c8f704
+    # https://woodpecker-ci.org/docs/usage/workflow-syntax#entrypoint
+    # Change entrypoint to `bash -lc`
+    entrypoint: ["/bin/bash", "-lc", "echo $CI_SCRIPT | base64 -d | /bin/bash -e"]
     commands:
-      - zig version
-      - zig fmt --check .
-      - zig build run-basic -freference-trace
-      - zig build run-advanced -freference-trace
-      - zig build run-multi -freference-trace
+      - asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
+      - asdf install golang latest && asdf global golang latest
+      - ./.github/server.sh
+      - make test
+      - make run
 
 when:
   - event: [push, cron]

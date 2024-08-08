@@ -1,10 +1,10 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2024-05-12T13:20:36+0800
+#+LASTMOD: 2024-08-08T19:49:59+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
-[[https://img.shields.io/badge/zig%20version-0.12.0-blue.svg]]
+[[https://img.shields.io/badge/zig%20version-0.13.0-blue.svg]]
 [[https://img.shields.io/badge/zig%20version-master-blue.svg]]
 [[https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml][https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml/badge.svg]]
 [[https://ci.codeberg.org/repos/13257][https://ci.codeberg.org/api/badges/13257/status.svg]]
@@ -63,10 +63,6 @@ const dep_curl = b.dependency("curl", .{ .link_vendor = false });
 exe.linkSystemLibrary("curl");
 exe.linkLibC();
 #+end_src
-
-* Roadmap
-
-- [x] Currently only easy API is supported, support [[https://curl.se/libcurl/c/libcurl-multi.html][multi API]].
 
 * License
 [[file:LICENSE][MIT]]

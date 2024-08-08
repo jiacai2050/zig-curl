@@ -37,10 +37,7 @@ jobs:
           make test
       - name: Run examples
         run: |
-          SERVER=/tmp/echo-server
-          go build -o ${SERVER} server/main.go
-          ${SERVER} &
-          sleep 10
+          ./.github/server.sh
           make run
       - name: Install deps
         if: matrix.os == 'ubuntu-latest'
@@ -83,10 +80,7 @@ jobs:
           make test
       - name: Run examples
         run: |
-          SERVER=/tmp/echo-server
-          go build -o ${SERVER} server/main.go
-          ${SERVER} &
-          sleep 10
+          ./.github/server.sh
           make run
       - name: Install deps
         if: matrix.os == 'ubuntu-latest'

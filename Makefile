@@ -1,9 +1,6 @@
 
 ARGS = ${ZIG_ARGS}
 
-prepare:
-	./libs/update.sh
-
 clean:
 	rm -rf zig-cache zig-out
 
@@ -16,7 +13,10 @@ run:
 	zig build run-multi -freference-trace $(ARGS)
 	zig build run-header -freference-trace $(ARGS)
 
-test:
+lint:
+	zig fmt --check .
+
+test: lint
 	zig build test $(ARGS)
 
 docs:
