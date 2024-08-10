@@ -350,6 +350,11 @@ pub fn setHeaders(self: Self, headers: Headers) !void {
     }
 }
 
+/// Set CURLOPT_SSL_VERIFYPEER
+pub fn setSSLVerifyPeer(self: Self, enable: bool) !void {
+    const param: c_long = @intCast(@intFromBool(enable));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_SSL_VERIFYPEER, param));
+}
 pub fn setUnixSocketPath(self: Self, path: [:0]const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_UNIX_SOCKET_PATH, path.ptr));
 }
