@@ -385,6 +385,11 @@ pub fn setPassword(self: Self, password: [:0]const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PASSWORD, password.ptr));
 }
 
+pub fn setNoBody(self: Self, enable: bool) !void {
+    const param: c_long = @intCast(@intFromBool(enable));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_NOBODY, param));
+}
+
 /// Perform sends an HTTP request and returns an HTTP response.
 pub fn perform(self: Self) !Response {
     try self.setCommonOpts();
