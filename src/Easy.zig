@@ -365,6 +365,17 @@ pub fn setWritefunction(
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, func));
 }
 
+pub fn setDebugdata(self: Self, data: *const anyopaque) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_DEBUGDATA, data));
+}
+
+pub fn setDebugfunction(
+    self: Self,
+    func: *const fn (*c.CURL, c.curl_infotype, [*]c_char, c_uint, *anyopaque) callconv(.C) c_int,
+) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_DEBUGFUNCTION, func));
+}
+
 pub fn setUsername(self: Self, username: [:0]const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_USERNAME, username.ptr));
 }
