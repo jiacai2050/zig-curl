@@ -384,6 +384,16 @@ pub fn setPassword(self: Self, password: [:0]const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PASSWORD, password.ptr));
 }
 
+pub const IpResolve = enum(c_int) {
+    whatever = c.CURL_IPRESOLVE_WHATEVER,
+    v4 = c.CURL_IPRESOLVE_V4,
+    v6 = c.CURL_IPRESOLVE_V6,
+};
+
+pub fn setIpResolve(self: Self, ipr: IpResolve) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_IPRESOLVE, @intFromEnum(ipr)));
+}
+
 /// Perform sends an HTTP request and returns an HTTP response.
 pub fn perform(self: Self) !Response {
     try self.setCommonOpts();
