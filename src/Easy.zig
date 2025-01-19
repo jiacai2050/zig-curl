@@ -480,7 +480,8 @@ pub fn fileWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_file
     const real_size = size * nmemb;
     var file: *std.fs.File = @alignCast(@ptrCast(user_file));
     var typed_data: [*]u8 = @ptrCast(ptr);
-    return file.write(typed_data[0..real_size]) catch return 0;
+    _ = file.write(typed_data[0..real_size]) catch return 0;
+    return real_size;
 }
 
 pub fn setCommonOpts(self: Self) !void {
