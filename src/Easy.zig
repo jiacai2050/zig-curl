@@ -473,6 +473,16 @@ pub fn bufferWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_da
     return real_size;
 }
 
+/// Used for write response via `std.fs.File` type.
+// https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION.html
+// size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userfile);
+pub fn fileWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_file: *anyopaque) callconv(.C) c_uint {
+    const real_size = size * nmemb;
+    var file: *std.fs.File = @alignCast(@ptrCast(user_file));
+    var typed_data: [*]u8 = @ptrCast(ptr);
+    return file.write(typed_data[0..real_size]) catch return 0;
+}
+
 pub fn setCommonOpts(self: Self) !void {
     if (self.ca_bundle) |bundle| {
         // https://curl.se/libcurl/c/CURLOPT_CAINFO_BLOB.html

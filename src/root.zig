@@ -5,6 +5,7 @@ const checkCode = @import("errors.zig").checkCode;
 pub const Easy = @import("Easy.zig");
 pub const Multi = @import("Multi.zig");
 pub const bufferWriteCallback = Easy.bufferWriteCallback;
+pub const fileWriteCallback = Easy.fileWriteCallback;
 pub const printLibcurlVersion = util.printLibcurlVersion;
 pub const hasParseHeaderSupport = util.hasParseHeaderSupport;
 pub const urlEncode = util.urlEncode;
