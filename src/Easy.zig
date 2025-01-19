@@ -394,6 +394,12 @@ pub fn setIpResolve(self: Self, ipr: IpResolve) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_IPRESOLVE, @intFromEnum(ipr)));
 }
 
+pub fn setInsecure(self: Self, enable: bool) !void {
+    const param: c_long = @intCast(@intFromBool(enable));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_SSL_VERIFYPEER, param));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_SSL_VERIFYHOST, param));
+}
+
 /// Perform sends an HTTP request and returns an HTTP response.
 pub fn perform(self: Self) !Response {
     try self.setCommonOpts();
