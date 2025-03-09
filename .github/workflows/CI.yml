@@ -23,7 +23,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        zig-version: [master, 0.13.0]
+        zig-version: [0.14.0]
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v1
@@ -61,7 +61,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        zig-version: [master, 0.13.0]
+        zig-version: [0.14.0]
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v1
@@ -74,7 +74,6 @@ jobs:
         run: |
           echo "ZIG_ARGS='-Dlink_vendor=false'" >> $GITHUB_ENV
           sudo apt update && sudo apt-get install -y libcurl4-openssl-dev
-
       - name: Run tests
         run: |
           make test

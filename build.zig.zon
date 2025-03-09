@@ -1,5 +1,6 @@
 .{
-    .name = "curl",
+    .name = .curl,
+    .fingerprint = 0x3e01b4de1538b3f,
     .version = "0.1.0",
     .paths = .{
         "src",

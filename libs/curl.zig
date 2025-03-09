@@ -46,7 +46,7 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     }
     lib.root_module.addCMacro("CURL_EXTERN_SYMBOL", "__attribute__ ((__visibility__ (\"default\"))");
 
-    const isDarwin = target.result.isDarwin();
+    const isDarwin = target.result.os.tag.isDarwin();
     if (!isDarwin)
         lib.root_module.addCMacro("ENABLE_IPV6", "1");
     lib.root_module.addCMacro("HAVE_ALARM", "1");

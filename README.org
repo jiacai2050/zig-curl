@@ -1,10 +1,10 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2024-08-08T19:49:59+0800
+#+LASTMOD: 2025-03-09T10:42:45+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
-[[https://img.shields.io/badge/zig%20version-0.13.0-blue.svg]]
+[[https://img.shields.io/badge/zig%20version-0.14.0-blue.svg]]
 [[https://img.shields.io/badge/zig%20version-master-blue.svg]]
 [[https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml][https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml/badge.svg]]
 [[https://ci.codeberg.org/repos/13257][https://ci.codeberg.org/api/badges/13257/status.svg]]
