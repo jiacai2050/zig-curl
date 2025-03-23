@@ -1,7 +1,7 @@
 .{
     .name = .curl,
     .fingerprint = 0x3e01b4de1538b3f,
-    .version = "0.1.0",
+    .version = "0.1.1",
     .paths = .{
         "src",
         "libs",
@@ -13,18 +13,18 @@
         .curl = .{
             // https://github.com/curl/curl/releases/tag/curl-8_8_0
             .url = "https://github.com/curl/curl/releases/download/curl-8_8_0/curl-8.8.0.tar.gz",
-            .hash = "12207d52e2cf89a5750ad273648c6f4cdeb5b4c19d171f0b1a3215cf592ca677fd94",
+            .hash = "N-V-__8AAHipPQF9UuLPiaV1CtJzZIxvTN61tMGdFx8LGjIV",
             .lazy = true,
         },
         // https://github.com/madler/zlib/releases/tag/v1.3.1
         .zlib = .{
             .url = "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz",
-            .hash = "1220c1854d7b4c2b5cbdd8ce6593c37e4bf1ac4032664735e1537c3848becb3b5834",
+            .hash = "N-V-__8AAJj_QgDBhU17TCtcvdjOZZPDfkvxrEAyZkc14VN8",
             .lazy = true,
         },
         .mbedtls = .{
             .url = "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v3.6.0.tar.gz",
-            .hash = "1220358fd78ebfb68dde5b77787d5325f1f89e901d448ae0da0187811be53dd3ec7c",
+            .hash = "N-V-__8AAFrtpQI1j9eOv7aN3lt3eH1TJfH4npAdRIrg2gGH",
             .lazy = true,
         },
     },
