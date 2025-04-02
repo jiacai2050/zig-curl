@@ -1,6 +1,6 @@
 const std = @import("std");
 const util = @import("util.zig");
-const checkCode = @import("errors.zig").checkCode;
+pub const checkCode = @import("errors.zig").checkCode;
 
 pub const Easy = @import("Easy.zig");
 pub const Multi = @import("Multi.zig");
