@@ -52,7 +52,7 @@ pub fn main() !void {
         // Read the HTTP status code
         var status_code: c_long = 0;
         try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_RESPONSE_CODE, &status_code));
-        std.debug.print("Return Code: {any}\n", .{status_code});
+        std.debug.print("Response Code: {any}\n", .{status_code});
 
         // Read the Response body
         const buf = b: {
