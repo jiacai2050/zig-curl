@@ -394,6 +394,10 @@ pub fn setIpResolve(self: Self, ipr: IpResolve) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_IPRESOLVE, @intFromEnum(ipr)));
 }
 
+pub fn setPrivate(self: Self, data: *const anyopaque) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PRIVATE, data));
+}
+
 pub fn setInsecure(self: Self, enable: bool) !void {
     const param: c_long = @intCast(@intFromBool(!enable));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_SSL_VERIFYPEER, param));

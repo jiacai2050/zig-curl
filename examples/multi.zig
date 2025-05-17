@@ -9,40 +9,39 @@ const c = curl.libcurl;
 const checkCode = curl.checkCode;
 const Buffer = curl.Buffer;
 
+fn newEasy(allocator: Allocator, buffer: *Buffer, url: [:0]const u8) !Easy {
+    const easy = try Easy.init(allocator, .{});
+    try easy.setUrl(url);
+    try easy.setWritedata(buffer);
+    try easy.setWritefunction(Easy.bufferWriteCallback);
+    // CURLOPT_PRIVATE allows us to store a pointer to the buffer in the easy handle
+    // so we can retrieve it later in the callback.
+    // Otherwise we would need to keep a hashmap of which handle goes with which buffer.
+    try easy.setPrivate(buffer);
+
+    return easy;
+}
+
 pub fn main() !void {
-    const allocator = std.heap.page_allocator;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) @panic("leak");
+    const allocator = gpa.allocator();
 
     const multi = try Multi.init();
     defer multi.deinit();
 
-    const easy1 = try Easy.init(allocator, .{});
-    try easy1.setUrl("http://httpbin.org/headers");
-    var buf1 = Buffer.init(allocator);
-    defer buf1.deinit();
-    try easy1.setWritedata(&buf1);
-    try easy1.setWritefunction(Easy.bufferWriteCallback);
-    // CURLOPT_PRIVATE allows us to store a pointer to the buffer in the easy handle
-    // so we can retrieve it later in the callback. Otherwise we would need to keep
-    // a hashmap of which handle goes with which buffer.
-    try checkCode(c.curl_easy_setopt(easy1.handle, c.CURLOPT_PRIVATE, &buf1));
-    try multi.addHandle(easy1);
+    var buffer1 = Buffer.init(allocator);
+    var buffer2 = Buffer.init(allocator);
+    try multi.addHandle(try newEasy(allocator, &buffer1, "http://httpbin.org/headers"));
+    try multi.addHandle(try newEasy(allocator, &buffer2, "http://httpbin.org/ip"));
 
-    const easy2 = try Easy.init(allocator, .{});
-    try easy2.setUrl("http://httpbin.org/ip");
-    var buf2 = Buffer.init(allocator);
-    defer buf2.deinit();
-    try easy2.setWritedata(&buf2);
-    try easy2.setWritefunction(Easy.bufferWriteCallback);
-    try checkCode(c.curl_easy_setopt(easy2.handle, c.CURLOPT_PRIVATE, &buf2));
-    try multi.addHandle(easy2);
+    var keep_running = true;
+    while (keep_running) {
+        const still_running = try multi.perform();
+        keep_running = still_running > 0;
+        std.debug.print("{d} pending requests...\n", .{still_running});
 
-    var pending_requests: c_int = 2;
-    while (pending_requests > 0) {
-        pending_requests = try multi.perform();
-        std.debug.print("{d} pending requests...\n", .{pending_requests});
-
-        // This will block for up to 100ms waiting for activity
-        const num_fds = try multi.poll(null, 100);
+        const num_fds = try multi.poll(null, 300);
         std.debug.print("{d} requests had activity...\n", .{num_fds});
 
         const info = multi.readInfo() catch |e| switch (e) {
@@ -52,6 +51,12 @@ pub fn main() !void {
 
         // If we have `info` then one of the requests completed
         const easy_handle = info.msg.easy_handle.?;
+        defer {
+            multi.removeHandle(easy_handle) catch |e| {
+                std.debug.print("{any}", .{e});
+            };
+            c.curl_easy_cleanup(easy_handle);
+        }
 
         // check that the request was successful
         try checkCode(info.msg.data.result);
@@ -65,12 +70,8 @@ pub fn main() !void {
         var private_data: ?*anyopaque = null;
         try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_PRIVATE, &private_data));
         const buf = @as(*Buffer, @ptrCast(@alignCast(private_data.?)));
-        std.debug.print("Body: {s}\n", .{buf.items});
+        defer buf.deinit();
 
-        try multi.removeHandle(easy_handle);
-
-        c.curl_easy_cleanup(easy_handle);
-        // Note: there is also `curl_easy_reset` if you want to reuse the handle
-        // for another request
+        std.debug.print("Response body: {s}\n", .{buf.items});
     }
 }
