@@ -7,7 +7,7 @@ const Easy = curl.Easy;
 const Multi = curl.Multi;
 const c = curl.libcurl;
 const checkCode = curl.checkCode;
-const Buffer = std.ArrayList(u8);
+const Buffer = curl.Buffer;
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
@@ -18,15 +18,22 @@ pub fn main() !void {
     const easy1 = try Easy.init(allocator, .{});
     try easy1.setUrl("http://httpbin.org/headers");
     var buf1 = Buffer.init(allocator);
+    defer buf1.deinit();
     try easy1.setWritedata(&buf1);
     try easy1.setWritefunction(Easy.bufferWriteCallback);
+    // CURLOPT_PRIVATE allows us to store a pointer to the buffer in the easy handle
+    // so we can retrieve it later in the callback. Otherwise we would need to keep
+    // a hashmap of which handle goes with which buffer.
+    try checkCode(c.curl_easy_setopt(easy1.handle, c.CURLOPT_PRIVATE, &buf1));
     try multi.addHandle(easy1);
 
     const easy2 = try Easy.init(allocator, .{});
     try easy2.setUrl("http://httpbin.org/ip");
     var buf2 = Buffer.init(allocator);
+    defer buf2.deinit();
     try easy2.setWritedata(&buf2);
     try easy2.setWritefunction(Easy.bufferWriteCallback);
+    try checkCode(c.curl_easy_setopt(easy2.handle, c.CURLOPT_PRIVATE, &buf2));
     try multi.addHandle(easy2);
 
     var pending_requests: c_int = 2;
@@ -54,15 +61,10 @@ pub fn main() !void {
         try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_RESPONSE_CODE, &status_code));
         std.debug.print("Response Code: {any}\n", .{status_code});
 
-        // Read the Response body
-        const buf = b: {
-            if (easy_handle == easy1.handle) {
-                break :b buf1;
-            } else if (easy_handle == easy2.handle) {
-                break :b buf2;
-            }
-            unreachable;
-        };
+        // Get the private data (buffer) associated with this handle
+        var private_data: ?*anyopaque = null;
+        try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_PRIVATE, &private_data));
+        const buf = @as(*Buffer, @ptrCast(@alignCast(private_data.?)));
         std.debug.print("Body: {s}\n", .{buf.items});
 
         try multi.removeHandle(easy_handle);
