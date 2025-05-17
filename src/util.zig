@@ -4,7 +4,16 @@ pub const c = @cImport({
 });
 const Allocator = std.mem.Allocator;
 const Encoder = std.base64.standard.Encoder;
-pub const Buffer = std.ArrayList(u8);
+pub const DynamicBuffer = std.ArrayList(u8);
+pub const StaticBuffer = struct {
+    data: []u8,
+    // How many bytes are used in the buffer.
+    size: usize,
+
+    pub fn init(data: []u8) StaticBuffer {
+        return .{ .data = data, .size = 0 };
+    }
+};
 
 pub fn encode_base64(allocator: Allocator, input: []const u8) ![]const u8 {
     const encoded_len = Encoder.calcSize(input.len);
@@ -93,11 +102,11 @@ test "url encode" {
 const CERT_MARKER_BEGIN = "-----BEGIN CERTIFICATE-----";
 const CERT_MARKER_END = "\n-----END CERTIFICATE-----\n";
 
-pub fn allocCABundle(allocator: std.mem.Allocator) !Buffer {
+pub fn allocCABundle(allocator: std.mem.Allocator) !DynamicBuffer {
     var bundle: std.crypto.Certificate.Bundle = .{};
     defer bundle.deinit(allocator);
 
-    var blob = Buffer.init(allocator);
+    var blob = DynamicBuffer.init(allocator);
     try bundle.rescan(allocator);
     var iter = bundle.map.iterator();
     while (iter.next()) |entry| {

@@ -9,10 +9,10 @@ const LOCAL_SERVER_ADDR = "http://localhost:8182";
 
 fn get(allocator: Allocator, easy: Easy) !void {
     try easy.setVerbose(true);
-    const resp = try easy.get("https://httpbin.org/anything");
+    const resp = try easy.getAlloc(allocator, "https://httpbin.org/anything");
     defer resp.deinit();
 
-    const body = resp.body.?.items;
+    const body = resp.body.?.slice();
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
         body,
@@ -94,7 +94,7 @@ pub fn main() !void {
 
     const ca_bundle = try curl.allocCABundle(allocator);
     defer ca_bundle.deinit();
-    const easy = try Easy.init(allocator, .{
+    const easy = try Easy.init(.{
         .ca_bundle = ca_bundle,
     });
     defer easy.deinit();
@@ -102,11 +102,11 @@ pub fn main() !void {
     println("GET demo");
     try get(allocator, easy);
 
-    println("POST demo");
-    easy.reset();
-    try post(allocator, easy);
+    // println("POST demo");
+    // easy.reset();
+    // try post(allocator, easy);
 
-    println("Upload demo");
-    easy.reset();
-    try upload(allocator, easy);
+    // println("Upload demo");
+    // easy.reset();
+    // try upload(allocator, easy);
 }

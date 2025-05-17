@@ -7,17 +7,17 @@ const mem = std.mem;
 const fmt = std.fmt;
 const Allocator = mem.Allocator;
 const checkCode = errors.checkCode;
-const Buffer = util.Buffer;
+const DynamicBuffer = util.DynamicBuffer;
+const StaticBuffer = util.StaticBuffer;
 
 const hasParseHeaderSupport = @import("util.zig").hasParseHeaderSupport;
 
 const Self = @This();
 
-allocator: Allocator,
 handle: *c.CURL,
 timeout_ms: usize,
 user_agent: [:0]const u8,
-ca_bundle: ?Buffer,
+ca_bundle: ?DynamicBuffer,
 
 pub const Method = enum {
     GET,
@@ -58,15 +58,29 @@ pub const Headers = struct {
 };
 
 pub const Response = struct {
-    body: ?Buffer = null,
+    const Body = union(enum) {
+        static: StaticBuffer,
+        dynamic: DynamicBuffer,
+
+        pub fn slice(self: Body) []const u8 {
+            return switch (self) {
+                .static => |s| s.data[0..s.size],
+                .dynamic => |d| d.items,
+            };
+        }
+    };
+
+    body: ?Body = null,
     status_code: i32,
 
     handle: *c.CURL,
-    allocator: Allocator,
 
     pub fn deinit(self: Response) void {
         if (self.body) |body| {
-            body.deinit();
+            switch (body) {
+                .static => {},
+                .dynamic => |d| d.deinit(),
+            }
         }
     }
 
@@ -267,16 +281,15 @@ pub const Options = struct {
     // Note that the vendored libcurl is compiled with mbedtls and does not include a CA bundle,
     // so this should be set when link with vendored libcurl, otherwise https
     // requests will fail.
-    ca_bundle: ?Buffer = null,
+    ca_bundle: ?DynamicBuffer = null,
     /// The maximum time in milliseconds that the entire transfer operation to take.
     default_timeout_ms: usize = 30_000,
     default_user_agent: [:0]const u8 = "zig-curl/0.1.0",
 };
 
-pub fn init(allocator: Allocator, options: Options) !Self {
+pub fn init(options: Options) !Self {
     return if (c.curl_easy_init()) |handle|
         .{
-            .allocator = allocator,
             .handle = handle,
             .ca_bundle = options.ca_bundle,
             .timeout_ms = options.default_timeout_ms,
@@ -416,18 +429,27 @@ pub fn perform(self: Self) !Response {
         .status_code = @intCast(status_code),
         .handle = self.handle,
         .body = null,
-        .allocator = self.allocator,
     };
 }
 
 /// Get issues a GET to the specified URL.
-pub fn get(self: Self, url: [:0]const u8) !Response {
-    var buf = Buffer.init(self.allocator);
-    try self.setWritefunction(bufferWriteCallback);
-    try self.setWritedata(&buf);
+pub fn get(self: Self, buffer: []u8, url: [:0]const u8) !Response {
+    var sb = StaticBuffer.init(buffer);
+    try self.setWritefunction(staticBufferWriteCallback);
+    try self.setWritedata(&sb);
     try self.setUrl(url);
     var resp = try self.perform();
-    resp.body = buf;
+    resp.body = .{ .static = sb };
+    return resp;
+}
+
+pub fn getAlloc(self: Self, allocator: Allocator, url: [:0]const u8) !Response {
+    var db = DynamicBuffer.init(allocator);
+    try self.setWritefunction(dynamicBufferWriteCallback);
+    try self.setWritedata(&db);
+    try self.setUrl(url);
+    var resp = try self.perform();
+    resp.body = .{ .dynamic = db };
     return resp;
 }
 
@@ -440,12 +462,12 @@ pub fn head(self: Self, url: [:0]const u8) !Response {
 }
 
 /// Post issues a POST to the specified URL.
-pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, body: []const u8) !Response {
-    var buf = Buffer.init(self.allocator);
-    try self.setWritefunction(bufferWriteCallback);
+pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, payload: []const u8) !Response {
+    var buf = DynamicBuffer.init(self.allocator);
+    try self.setWritefunction(dynamicBufferWriteCallback);
     try self.setWritedata(&buf);
     try self.setUrl(url);
-    try self.setPostFields(body);
+    try self.setPostFields(payload);
 
     var headers = try self.createHeaders();
     defer headers.deinit();
@@ -463,8 +485,8 @@ pub fn upload(self: Self, url: [:0]const u8, path: []const u8) !Response {
     defer up.deinit();
 
     try self.setUpload(&up);
-    var buf = Buffer.init(self.allocator);
-    try self.setWritefunction(bufferWriteCallback);
+    var buf = DynamicBuffer.init(self.allocator);
+    try self.setWritefunction(dynamicBufferWriteCallback);
     try self.setWritedata(&buf);
     try self.setUrl(url);
     var resp = try self.perform();
@@ -472,14 +494,29 @@ pub fn upload(self: Self, url: [:0]const u8, path: []const u8) !Response {
     return resp;
 }
 
-/// Used for write response via `Buffer` type.
+/// Used for write response via `DynamicBuffer` type.
 // https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION.html
 // size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata);
-pub fn bufferWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
+pub fn dynamicBufferWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
     const real_size = size * nmemb;
-    var buffer: *Buffer = @alignCast(@ptrCast(user_data));
+    var buffer: *DynamicBuffer = @alignCast(@ptrCast(user_data));
     var typed_data: [*]u8 = @ptrCast(ptr);
     buffer.appendSlice(typed_data[0..real_size]) catch return 0;
+    return real_size;
+}
+
+pub fn staticBufferWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
+    const real_size = size * nmemb;
+    var buffer: *util.StaticBuffer = @alignCast(@ptrCast(user_data));
+    const remaining = buffer.data.len - buffer.size;
+    if (remaining < real_size) {
+        // Buffer not large enough, return 0.
+        return 0;
+    }
+
+    var typed_data: [*]u8 = @ptrCast(ptr);
+    std.mem.copyForwards(u8, buffer.data[buffer.size..], typed_data[0..real_size]);
+    buffer.size += real_size;
     return real_size;
 }
 

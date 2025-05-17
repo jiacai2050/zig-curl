@@ -9,7 +9,7 @@ pub const printLibcurlVersion = util.printLibcurlVersion;
 pub const hasParseHeaderSupport = util.hasParseHeaderSupport;
 pub const urlEncode = util.urlEncode;
 pub const allocCABundle = util.allocCABundle;
-pub const Buffer = util.Buffer;
+pub const Buffer = util.DynamicBuffer;
 pub const libcurl = util.c;
 
 /// This function sets up the program environment that libcurl needs.
