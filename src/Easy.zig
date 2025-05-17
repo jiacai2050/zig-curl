@@ -354,8 +354,12 @@ pub fn setUnixSocketPath(self: Self, path: [:0]const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_UNIX_SOCKET_PATH, path.ptr));
 }
 
-pub fn setWritedata(self: Self, data: *const anyopaque) !void {
+pub fn setWritedata(self: Self, data: *anyopaque) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEDATA, data));
+}
+
+pub fn setPrivate(self: Self, data: *anyopaque) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PRIVATE, data));
 }
 
 pub fn setWritefunction(
@@ -392,10 +396,6 @@ pub const IpResolve = enum(c_int) {
 
 pub fn setIpResolve(self: Self, ipr: IpResolve) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_IPRESOLVE, @intFromEnum(ipr)));
-}
-
-pub fn setPrivate(self: Self, data: *const anyopaque) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PRIVATE, data));
 }
 
 pub fn setInsecure(self: Self, enable: bool) !void {

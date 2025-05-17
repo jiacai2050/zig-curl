@@ -69,7 +69,7 @@ pub fn main() !void {
         // Get the private data (buffer) associated with this handle
         var private_data: ?*anyopaque = null;
         try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_PRIVATE, &private_data));
-        const buf = @as(*Buffer, @ptrCast(@alignCast(private_data.?)));
+        const buf: *Buffer = @ptrCast(@alignCast(private_data.?));
         defer buf.deinit();
 
         std.debug.print("Response body: {s}\n", .{buf.items});
