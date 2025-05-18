@@ -436,7 +436,7 @@ pub fn head(self: Self, url: [:0]const u8) !Response {
 }
 
 /// Fetch issues a request to the specified URL.
-/// Response body is allocated dyamically.
+/// Response body is allocated dynamically.
 pub fn fetchAlloc(
     self: Self,
     url: [:0]const u8,
