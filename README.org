@@ -1,6 +1,6 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2025-03-09T10:42:45+0800
+#+LASTMOD: 2025-05-18T21:07:57+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -31,15 +31,15 @@ pub fn main() !void {
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const easy = try curl.Easy.init(allocator, .{});
+    const easy = try curl.Easy.init(.{});
     defer easy.deinit();
 
-    const resp = try easy.get("http://httpbin.org/anything");
+    const resp = try easy.fetchAlloc("http://httpbin.org/anything", allocator, .{});
     defer resp.deinit();
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        resp.body.items,
+        resp.body.?.slice(),
     });
 }
 #+end_src
@@ -47,10 +47,12 @@ See [[file:examples/basic.zig]], [[file:examples/advanced.zig]] for more usage.
 
 * Installation
 #+begin_src bash
-zig fetch --save=curl https://github.com/jiacai2050/zig-curl/archive/${COMMIT}.tar.gz
+zig fetch --save=curl  https://github.com/jiacai2050/zig-curl/archive/refs/tags/${TAG}.zip
 #+end_src
 
-Replace ~${COMMIT}~ with a real one, then in your =build.zig=, import the module like this:
+The latest tag can be found on [[https://github.com/jiacai2050/zig-curl/releases/][release page]].
+
+After fetch, import =curl= like this in your =build.zig=:
 #+begin_src zig
 const dep_curl = b.dependency("curl", .{});
 exe.root_module.addImport("curl", dep_curl.module("curl"));

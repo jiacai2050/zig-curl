@@ -7,13 +7,13 @@ const Easy = curl.Easy;
 const Multi = curl.Multi;
 const c = curl.libcurl;
 const checkCode = curl.checkCode;
-const Buffer = curl.Buffer;
+const Buffer = curl.DynamicBuffer;
 
-fn newEasy(allocator: Allocator, buffer: *Buffer, url: [:0]const u8) !Easy {
-    const easy = try Easy.init(allocator, .{});
+fn newEasy(buffer: *Buffer, url: [:0]const u8) !Easy {
+    const easy = try Easy.init(.{});
     try easy.setUrl(url);
     try easy.setWritedata(buffer);
-    try easy.setWritefunction(Easy.bufferWriteCallback);
+    try easy.setWritefunction(Easy.dynamicBufferWriteCallback);
     // CURLOPT_PRIVATE allows us to store a pointer to the buffer in the easy handle
     // so we can retrieve it later in the callback.
     // Otherwise we would need to keep a hashmap of which handle goes with which buffer.
@@ -31,9 +31,12 @@ pub fn main() !void {
     defer multi.deinit();
 
     var buffer1 = Buffer.init(allocator);
+    defer buffer1.deinit();
     var buffer2 = Buffer.init(allocator);
-    try multi.addHandle(try newEasy(allocator, &buffer1, "http://httpbin.org/headers"));
-    try multi.addHandle(try newEasy(allocator, &buffer2, "http://httpbin.org/ip"));
+    defer buffer2.deinit();
+
+    try multi.addHandle(try newEasy(&buffer1, "http://httpbin.org/headers"));
+    try multi.addHandle(try newEasy(&buffer2, "http://httpbin.org/ip"));
 
     var keep_running = true;
     while (keep_running) {
@@ -70,7 +73,6 @@ pub fn main() !void {
         var private_data: ?*anyopaque = null;
         try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_PRIVATE, &private_data));
         const buf: *Buffer = @ptrCast(@alignCast(private_data.?));
-        defer buf.deinit();
 
         std.debug.print("Response body: {s}\n", .{buf.items});
     }
