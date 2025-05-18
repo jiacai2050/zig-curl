@@ -41,8 +41,9 @@ pub const Headers = struct {
         }
     }
 
-    pub fn add(self: *Headers, kv: [:0]const u8) !void {
-        self.headers = c.curl_slist_append(self.headers, kv.ptr) orelse {
+    /// `header` is in `name: value` format.
+    pub fn add(self: *Headers, header: [:0]const u8) !void {
+        self.headers = c.curl_slist_append(self.headers, header.ptr) orelse {
             return errors.HeaderError.OutOfMemory;
         };
     }
