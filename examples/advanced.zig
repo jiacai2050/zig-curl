@@ -87,7 +87,7 @@ fn putWithCustomHeader(allocator: Allocator, easy: Easy) !void {
     }
 }
 
-fn postMutliPart(allocator: Allocator, easy: Easy) !void {
+fn postMultiPart(allocator: Allocator, easy: Easy) !void {
     // Reset old options, e.g. headers.
     easy.reset();
 
@@ -126,5 +126,5 @@ pub fn main() !void {
 
     println("PUT with custom header demo");
     try putWithCustomHeader(allocator, easy);
-    try postMutliPart(allocator, easy);
+    try postMultiPart(allocator, easy);
 }

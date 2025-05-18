@@ -2,10 +2,11 @@ const std = @import("std");
 const Build = std.Build;
 const Step = Build.Step;
 const Module = Build.Module;
+const Allocator = std.mem.Allocator;
 
 const MODULE_NAME = "curl";
 
-pub fn build(b: *Build) void {
+pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const link_vendor = b.option(bool, "link_vendor", "Whether link to vendored libcurl (default: true)") orelse true;
@@ -16,6 +17,12 @@ pub fn build(b: *Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const manifest = try parseManifest(b);
+    defer manifest.deinit(b.allocator);
+
+    const opt = b.addOptions();
+    opt.addOption([]const u8, "version", manifest.version);
+    module.addImport("build_info", opt.createModule());
 
     var libcurl: ?*Step.Compile = null;
     if (link_vendor) {
@@ -111,4 +118,30 @@ fn addExample(
         std.fmt.comptimePrint("Run {s} example", .{name}),
     );
     run_step.dependOn(&b.addRunArtifact(exe).step);
+}
+
+const Manifest = struct {
+    version: []const u8,
+
+    fn deinit(self: Manifest, allocator: Allocator) void {
+        allocator.free(self.version);
+    }
+};
+
+fn parseManifest(b: *Build) !Manifest {
+    const input = @embedFile("build.zig.zon");
+    var status: std.zon.parse.Status = .{};
+    defer status.deinit(b.allocator);
+    const parsed = std.zon.parse.fromSlice(
+        Manifest,
+        b.allocator,
+        input,
+        &status,
+        .{ .free_on_error = true, .ignore_unknown_fields = true },
+    ) catch |err| {
+        std.debug.print("Parse status: {any}\n", .{status});
+        return err;
+    };
+
+    return parsed;
 }

@@ -4,12 +4,13 @@ pub const checkCode = @import("errors.zig").checkCode;
 
 pub const Easy = @import("Easy.zig");
 pub const Multi = @import("Multi.zig");
+pub const DynamicBuffer = util.DynamicBuffer;
+pub const StaticBuffer = util.StaticBuffer;
+
 pub const printLibcurlVersion = util.printLibcurlVersion;
 pub const hasParseHeaderSupport = util.hasParseHeaderSupport;
 pub const urlEncode = util.urlEncode;
 pub const allocCABundle = util.allocCABundle;
-pub const DynamicBuffer = util.DynamicBuffer;
-pub const StaticBuffer = util.StaticBuffer;
 pub const libcurl = util.c;
 
 /// This function sets up the program environment that libcurl needs.

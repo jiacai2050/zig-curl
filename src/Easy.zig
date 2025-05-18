@@ -282,7 +282,7 @@ pub const Options = struct {
     ca_bundle: ?DynamicBuffer = null,
     /// The maximum time in milliseconds that the entire transfer operation to take.
     default_timeout_ms: usize = 30_000,
-    default_user_agent: [:0]const u8 = "zig-curl/0.1.0",
+    default_user_agent: [:0]const u8 = "zig-curl/" ++ @import("build_info").version,
 };
 
 pub fn init(options: Options) !Self {
