@@ -33,43 +33,42 @@ pub const Method = enum {
 };
 
 pub const Headers = struct {
-    headers: ?*c.struct_curl_slist,
-    allocator: Allocator,
-
-    pub fn init(allocator: Allocator) !Headers {
-        return .{
-            .allocator = allocator,
-            .headers = null,
-        };
-    }
+    headers: ?*c.struct_curl_slist = null,
 
     pub fn deinit(self: Headers) void {
-        c.curl_slist_free_all(self.headers);
+        if (self.headers) |h| {
+            c.curl_slist_free_all(h);
+        }
     }
 
-    pub fn add(self: *Headers, name: []const u8, value: []const u8) !void {
-        const header = try std.fmt.allocPrintZ(self.allocator, "{s}: {s}", .{ name, value });
-        defer self.allocator.free(header);
-
-        self.headers = c.curl_slist_append(self.headers, header) orelse {
+    pub fn add(self: *Headers, kv: [:0]const u8) !void {
+        self.headers = c.curl_slist_append(self.headers, kv.ptr) orelse {
             return errors.HeaderError.OutOfMemory;
         };
     }
 };
 
+const Body = union(enum) {
+    static: StaticBuffer,
+    dynamic: DynamicBuffer,
+
+    pub fn slice(self: Body) []const u8 {
+        return switch (self) {
+            .static => |s| s.data[0..s.size],
+            .dynamic => |d| d.items,
+        };
+    }
+};
+
+pub const FetchOptions = struct {
+    method: Method = .GET,
+    body: ?[]const u8 = null,
+    headers: ?[]const [:0]const u8 = null,
+    // Required for headers
+    allocator: ?Allocator = null,
+};
+
 pub const Response = struct {
-    const Body = union(enum) {
-        static: StaticBuffer,
-        dynamic: DynamicBuffer,
-
-        pub fn slice(self: Body) []const u8 {
-            return switch (self) {
-                .static => |s| s.data[0..s.size],
-                .dynamic => |d| d.items,
-            };
-        }
-    };
-
     body: ?Body = null,
     status_code: i32,
 
@@ -217,7 +216,6 @@ pub const Response = struct {
 
 pub const MultiPart = struct {
     mime_handle: *c.curl_mime,
-    allocator: Allocator,
 
     pub const DataSource = union(enum) {
         /// Set a mime part's body content from memory data.
@@ -303,16 +301,9 @@ pub fn deinit(self: Self) void {
     c.curl_easy_cleanup(self.handle);
 }
 
-pub fn createHeaders(self: Self) !Headers {
-    return Headers.init(self.allocator);
-}
-
 pub fn createMultiPart(self: Self) !MultiPart {
     return if (c.curl_mime_init(self.handle)) |h|
-        .{
-            .allocator = self.allocator,
-            .mime_handle = h,
-        }
+        .{ .mime_handle = h }
     else
         error.MimeInit;
 }
@@ -359,8 +350,12 @@ pub fn reset(self: Self) void {
 
 pub fn setHeaders(self: Self, headers: Headers) !void {
     if (headers.headers) |c_headers| {
-        try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, c_headers));
+        try self.setHeadersC(c_headers);
     }
+}
+
+pub fn setHeadersC(self: Self, headers: *c.struct_curl_slist) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, headers));
 }
 
 pub fn setUnixSocketPath(self: Self, path: [:0]const u8) !void {
@@ -432,27 +427,6 @@ pub fn perform(self: Self) !Response {
     };
 }
 
-/// Get issues a GET to the specified URL.
-pub fn get(self: Self, buffer: []u8, url: [:0]const u8) !Response {
-    var sb = StaticBuffer.init(buffer);
-    try self.setWritefunction(staticBufferWriteCallback);
-    try self.setWritedata(&sb);
-    try self.setUrl(url);
-    var resp = try self.perform();
-    resp.body = .{ .static = sb };
-    return resp;
-}
-
-pub fn getAlloc(self: Self, allocator: Allocator, url: [:0]const u8) !Response {
-    var db = DynamicBuffer.init(allocator);
-    try self.setWritefunction(dynamicBufferWriteCallback);
-    try self.setWritedata(&db);
-    try self.setUrl(url);
-    var resp = try self.perform();
-    resp.body = .{ .dynamic = db };
-    return resp;
-}
-
 /// Head issues a HEAD to the specified URL.
 pub fn head(self: Self, url: [:0]const u8) !Response {
     try self.setUrl(url);
@@ -461,36 +435,108 @@ pub fn head(self: Self, url: [:0]const u8) !Response {
     return self.perform();
 }
 
-/// Post issues a POST to the specified URL.
-pub fn post(self: Self, url: [:0]const u8, content_type: []const u8, payload: []const u8) !Response {
-    var buf = DynamicBuffer.init(self.allocator);
-    try self.setWritefunction(dynamicBufferWriteCallback);
-    try self.setWritedata(&buf);
+/// Fetch issues a request to the specified URL.
+/// Response body is allocated dyamically.
+pub fn fetchAlloc(
+    self: Self,
+    url: [:0]const u8,
+    allocator: Allocator,
+    options: FetchOptions,
+) !Response {
     try self.setUrl(url);
-    try self.setPostFields(payload);
+    try self.setMethod(options.method);
+    if (options.body) |body| {
+        try self.setPostFields(body);
+    }
+    var headers: ?Headers = null;
+    if (options.headers) |header_slice| {
+        headers = .{};
+        for (header_slice) |header| {
+            try headers.?.add(header);
+        }
+        try self.setHeaders(headers.?);
+    }
 
-    var headers = try self.createHeaders();
-    defer headers.deinit();
-    try headers.add("Content-Type", content_type);
-    try self.setHeaders(headers);
+    defer if (headers) |h| {
+        h.deinit();
+    };
 
+    var db = DynamicBuffer.init(allocator);
+    try self.setWritefunction(dynamicBufferWriteCallback);
+    try self.setWritedata(&db);
     var resp = try self.perform();
-    resp.body = buf;
+    resp.body = .{ .dynamic = db };
     return resp;
 }
 
+/// Fetch issues a request to the specified URL.
+/// Modeled after fetch in Javascript.
+pub fn fetch(
+    self: Self,
+    url: [:0]const u8,
+    resp_buffer: ?[]u8,
+    options: FetchOptions,
+) !Response {
+    try self.setUrl(url);
+    try self.setMethod(options.method);
+    if (options.body) |body| {
+        try self.setPostFields(body);
+    }
+    var headers: ?Headers = null;
+    if (options.headers) |header_slice| {
+        headers = .{};
+        for (header_slice) |header| {
+            try headers.?.add(header);
+        }
+        try self.setHeaders(headers.?);
+    }
+
+    defer if (headers) |h| {
+        h.deinit();
+    };
+
+    if (resp_buffer) |buffer| {
+        var sb = StaticBuffer.init(buffer);
+        try self.setWritefunction(staticBufferWriteCallback);
+        try self.setWritedata(&sb);
+        var resp = try self.perform();
+        resp.body = .{ .static = sb };
+        return resp;
+    }
+
+    return try self.perform();
+}
+
 /// Upload issues a PUT request to upload file.
-pub fn upload(self: Self, url: [:0]const u8, path: []const u8) !Response {
+pub fn upload(self: Self, url: [:0]const u8, path: []const u8, body_buffer: ?[]u8) !Response {
     var up = try Upload.init(path);
     defer up.deinit();
-
     try self.setUpload(&up);
-    var buf = DynamicBuffer.init(self.allocator);
-    try self.setWritefunction(dynamicBufferWriteCallback);
-    try self.setWritedata(&buf);
     try self.setUrl(url);
+    if (body_buffer) |buffer| {
+        var sb = StaticBuffer.init(buffer);
+        try self.setWritefunction(staticBufferWriteCallback);
+        try self.setWritedata(&sb);
+        var resp = try self.perform();
+        resp.body = .{ .static = sb };
+        return resp;
+    }
+
+    return try self.perform();
+}
+
+/// Upload issues a PUT request to upload file.
+pub fn uploadAlloc(self: Self, url: [:0]const u8, path: []const u8, allocator: Allocator) !Response {
+    var up = try Upload.init(path);
+    defer up.deinit();
+    try self.setUpload(&up);
+
+    try self.setUrl(url);
+    var db = DynamicBuffer.init(allocator);
+    try self.setWritefunction(dynamicBufferWriteCallback);
+    try self.setWritedata(&db);
     var resp = try self.perform();
-    resp.body = buf;
+    resp.body = .{ .dynamic = db };
     return resp;
 }
 

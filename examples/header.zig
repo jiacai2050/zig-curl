@@ -7,7 +7,11 @@ fn iterateHeaders(easy: Easy) !void {
     // Reset old options, e.g. headers.
     easy.reset();
 
-    const resp = try easy.get("https://httpbin.org/response-headers?X-Foo=1&X-Foo=2&X-Foo=3");
+    const resp = try easy.fetch(
+        "https://httpbin.org/response-headers?X-Foo=1&X-Foo=2&X-Foo=3",
+        null,
+        .{},
+    );
     defer resp.deinit();
 
     std.debug.print("Iterating all headers...\n", .{});
@@ -35,7 +39,7 @@ fn iterateRedirectedHeaders(easy: Easy) !void {
     easy.reset();
 
     try easy.setFollowLocation(true);
-    const resp = try easy.get("https://httpbin.org/redirect/1");
+    const resp = try easy.fetch("https://httpbin.org/redirect/1", null, .{});
     defer resp.deinit();
 
     const redirects = try resp.getRedirectCount();
@@ -63,13 +67,13 @@ fn iterateRedirectedHeaders(easy: Easy) !void {
 }
 
 pub fn main() !void {
-    const allocator = std.heap.page_allocator;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) @panic("leak");
+    const allocator = gpa.allocator();
 
     const ca_bundle = try curl.allocCABundle(allocator);
     defer ca_bundle.deinit();
-    const easy = try Easy.init(allocator, .{
-        .ca_bundle = ca_bundle,
-    });
+    const easy = try Easy.init(.{ .ca_bundle = ca_bundle });
     defer easy.deinit();
 
     if (comptime !curl.hasParseHeaderSupport()) {
