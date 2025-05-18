@@ -64,8 +64,6 @@ pub const FetchOptions = struct {
     method: Method = .GET,
     body: ?[]const u8 = null,
     headers: ?[]const [:0]const u8 = null,
-    // Required for headers
-    allocator: ?Allocator = null,
 };
 
 pub const Response = struct {

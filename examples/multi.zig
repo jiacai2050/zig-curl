@@ -31,7 +31,10 @@ pub fn main() !void {
     defer multi.deinit();
 
     var buffer1 = Buffer.init(allocator);
+    defer buffer1.deinit();
     var buffer2 = Buffer.init(allocator);
+    defer buffer2.deinit();
+
     try multi.addHandle(try newEasy(&buffer1, "http://httpbin.org/headers"));
     try multi.addHandle(try newEasy(&buffer2, "http://httpbin.org/ip"));
 
@@ -70,7 +73,6 @@ pub fn main() !void {
         var private_data: ?*anyopaque = null;
         try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_PRIVATE, &private_data));
         const buf: *Buffer = @ptrCast(@alignCast(private_data.?));
-        defer buf.deinit();
 
         std.debug.print("Response body: {s}\n", .{buf.items});
     }
