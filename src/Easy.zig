@@ -553,7 +553,7 @@ pub fn dynamicBufferWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, 
 
 pub fn staticBufferWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
     const real_size = size * nmemb;
-    var buffer: *util.StaticBuffer = @alignCast(@ptrCast(user_data));
+    var buffer: *StaticBuffer = @alignCast(@ptrCast(user_data));
     const remaining = buffer.data.len - buffer.size;
     if (remaining < real_size) {
         // Buffer not large enough, return 0.
