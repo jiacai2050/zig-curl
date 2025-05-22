@@ -506,6 +506,35 @@ pub fn fetch(
     return try self.perform();
 }
 
+pub fn fetchFile(
+    self: Self,
+    url: [:0]const u8,
+    file: *std.fs.File,
+    options: FetchOptions,
+) !Response {
+    try self.setUrl(url);
+    try self.setMethod(options.method);
+    if (options.body) |body| {
+        try self.setPostFields(body);
+    }
+    var headers: ?Headers = null;
+    if (options.headers) |header_slice| {
+        headers = .{};
+        for (header_slice) |header| {
+            try headers.?.add(header);
+        }
+        try self.setHeaders(headers.?);
+    }
+
+    defer if (headers) |h| {
+        h.deinit();
+    };
+
+    try self.setWritefunction(fileWriteCallback);
+    try self.setWritedata(file);
+    return try self.perform();
+}
+
 /// Upload issues a PUT request to upload file.
 pub fn upload(self: Self, url: [:0]const u8, path: []const u8, body_buffer: ?[]u8) !Response {
     var up = try Upload.init(path);
@@ -562,6 +591,14 @@ pub fn staticBufferWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, u
     var typed_data: [*]u8 = @ptrCast(ptr);
     std.mem.copyForwards(u8, buffer.data[buffer.size..], typed_data[0..real_size]);
     buffer.size += real_size;
+    return real_size;
+}
+
+pub fn fileWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
+    const real_size = size * nmemb;
+    var file: *std.fs.File = @alignCast(@ptrCast(user_data));
+    var typed_data: [*]u8 = @ptrCast(ptr);
+    file.writeAll(typed_data[0..real_size]) catch return 0;
     return real_size;
 }
 

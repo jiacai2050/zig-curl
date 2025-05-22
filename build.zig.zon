@@ -1,6 +1,6 @@
 .{
     .name = .curl,
-    .fingerprint = 0x3e01b4de1538b3f,
+    .fingerprint = 0x3e01b4ddef29ee1,
     .version = "0.2.0",
     .paths = .{
         "src",
