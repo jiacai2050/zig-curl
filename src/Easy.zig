@@ -506,6 +506,8 @@ pub fn fetch(
     return try self.perform();
 }
 
+/// Fetch issues a request to the specified URL.
+/// Response body is written to the specified file.
 pub fn fetchFile(
     self: Self,
     url: [:0]const u8,
