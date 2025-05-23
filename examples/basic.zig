@@ -31,6 +31,25 @@ fn get(allocator: Allocator, easy: Easy) !void {
             body,
         });
     }
+
+    {
+        println("GET with file");
+        var file = try std.fs.cwd().createFile("resp.txt", .{ .read = true, .truncate = true });
+
+        defer file.close();
+        const resp = try easy.fetchFile("https://httpbin.org/anything", &file, .{});
+        defer resp.deinit();
+
+        try file.seekTo(0);
+        const body = try file.readToEndAlloc(allocator, (try file.stat()).size);
+        defer allocator.free(body);
+        std.debug.print("Status code: {d}\nBody: {s}\n", .{
+            resp.status_code,
+            body,
+        });
+
+        try std.fs.cwd().deleteFile("resp.txt");
+    }
 }
 
 fn post(allocator: Allocator, easy: Easy) !void {
