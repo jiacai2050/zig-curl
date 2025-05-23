@@ -506,7 +506,7 @@ pub fn fetch(
     return try self.perform();
 }
 
-/// Fetch issues a request to the specified URL.
+/// fetchFile issues a request to the specified URL.
 /// Response body is written to the specified file.
 pub fn fetchFile(
     self: Self,
@@ -534,6 +534,39 @@ pub fn fetchFile(
 
     try self.setWritefunction(fileWriteCallback);
     try self.setWritedata(file);
+    return try self.perform();
+}
+
+/// fetchWriter issues a request to the specified URL.
+/// Response body is written to the any writer.
+pub fn fetchWriter(
+    self: Self,
+    url: [:0]const u8,
+    writer: anytype,
+    options: FetchOptions,
+) !Response {
+    try self.setUrl(url);
+    try self.setMethod(options.method);
+    if (options.body) |body| {
+        try self.setPostFields(body);
+    }
+    var headers: ?Headers = null;
+    if (options.headers) |header_slice| {
+        headers = .{};
+        for (header_slice) |header| {
+            try headers.?.add(header);
+        }
+        try self.setHeaders(headers.?);
+    }
+
+    defer if (headers) |h| {
+        h.deinit();
+    };
+
+    var any_writer = writer.any();
+
+    try self.setWritefunction(writerCallback);
+    try self.setWritedata(&any_writer);
     return try self.perform();
 }
 
@@ -601,6 +634,14 @@ pub fn fileWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data
     var file: *std.fs.File = @alignCast(@ptrCast(user_data));
     var typed_data: [*]u8 = @ptrCast(ptr);
     file.writeAll(typed_data[0..real_size]) catch return 0;
+    return real_size;
+}
+
+pub fn writerCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
+    const real_size = size * nmemb;
+    var writer: *std.io.AnyWriter = @alignCast(@ptrCast(user_data));
+    var typed_data: [*]u8 = @ptrCast(ptr);
+    writer.writeAll(typed_data[0..real_size]) catch return 0;
     return real_size;
 }
 
