@@ -7,17 +7,14 @@ const Easy = curl.Easy;
 const Multi = curl.Multi;
 const c = curl.libcurl;
 const checkCode = curl.checkCode;
-const Buffer = curl.DynamicBuffer;
 
-fn newEasy(buffer: *Buffer, url: [:0]const u8) !Easy {
+fn newEasy(ctx: *curl.DynamicContext, url: [:0]const u8) !Easy {
     const easy = try Easy.init(.{});
     try easy.setUrl(url);
-    try easy.setWritedata(buffer);
-    try easy.setWritefunction(Easy.dynamicBufferWriteCallback);
-    // CURLOPT_PRIVATE allows us to store a pointer to the buffer in the easy handle
+    try easy.setWriteContext(ctx, curl.DynamicContext.write);
+    // CURLOPT_PRIVATE allows us to store a pointer to the ctx in the easy handle
     // so we can retrieve it later in the callback.
-    // Otherwise we would need to keep a hashmap of which handle goes with which buffer.
-    try easy.setPrivate(buffer);
+    try easy.setPrivate(ctx);
 
     return easy;
 }
@@ -30,13 +27,11 @@ pub fn main() !void {
     const multi = try Multi.init();
     defer multi.deinit();
 
-    var buffer1 = Buffer.init(allocator);
-    defer buffer1.deinit();
-    var buffer2 = Buffer.init(allocator);
-    defer buffer2.deinit();
+    var ctx1 = curl.DynamicContext.init(allocator);
+    var ctx2 = curl.DynamicContext.init(allocator);
 
-    try multi.addHandle(try newEasy(&buffer1, "http://httpbin.org/headers"));
-    try multi.addHandle(try newEasy(&buffer2, "http://httpbin.org/ip"));
+    try multi.addHandle(try newEasy(&ctx1, "http://httpbin.org/headers"));
+    try multi.addHandle(try newEasy(&ctx2, "http://httpbin.org/ip"));
 
     var keep_running = true;
     while (keep_running) {
@@ -72,8 +67,9 @@ pub fn main() !void {
         // Get the private data (buffer) associated with this handle
         var private_data: ?*anyopaque = null;
         try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_PRIVATE, &private_data));
-        const buf: *Buffer = @ptrCast(@alignCast(private_data.?));
+        const ctx: *curl.DynamicContext = @ptrCast(@alignCast(private_data.?));
+        defer ctx.deinit();
 
-        std.debug.print("Response body: {s}\n", .{buf.items});
+        std.debug.print("Response body: {s}\n", .{ctx.asSlice()});
     }
 }
