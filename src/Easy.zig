@@ -372,8 +372,8 @@ pub fn setWriteContext(
         fn write(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
             const real_size = size * nmemb;
             const ctx: @TypeOf(context) = @alignCast(@ptrCast(user_data));
-            var typed_data: [*]u8 = @ptrCast(ptr);
-            return @intCast(writeFunc(ctx, typed_data[0..real_size]));
+            const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];
+            return @intCast(writeFunc(ctx, data));
         }
     }.write);
 }
@@ -513,7 +513,7 @@ pub fn stdoutWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_da
     _ = user_data;
     const stdout = std.io.getStdOut().writer();
     const real_size = size * nmemb;
-    const data = ptr[0..real_size];
+    const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];
     stdout.writeAll(data) catch {
         return 0;
     };

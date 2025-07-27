@@ -60,7 +60,7 @@ pub const DynamicContext = struct {
         data: []const u8,
     ) usize {
         ctx.buffer.appendSlice(data) catch {
-            // Not enough space in the buffer
+            // Out of memory
             return 0;
         };
 

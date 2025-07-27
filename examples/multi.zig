@@ -28,7 +28,9 @@ pub fn main() !void {
     defer multi.deinit();
 
     var ctx1 = curl.DynamicContext.init(allocator);
+    defer ctx1.deinit();
     var ctx2 = curl.DynamicContext.init(allocator);
+    defer ctx2.deinit();
 
     try multi.addHandle(try newEasy(&ctx1, "http://httpbin.org/headers"));
     try multi.addHandle(try newEasy(&ctx2, "http://httpbin.org/ip"));
@@ -68,7 +70,6 @@ pub fn main() !void {
         var private_data: ?*anyopaque = null;
         try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_PRIVATE, &private_data));
         const ctx: *curl.DynamicContext = @ptrCast(@alignCast(private_data.?));
-        defer ctx.deinit();
 
         std.debug.print("Response body: {s}\n", .{ctx.asSlice()});
     }
