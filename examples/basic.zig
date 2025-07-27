@@ -7,28 +7,22 @@ const Easy = curl.Easy;
 
 const LOCAL_SERVER_ADDR = "http://localhost:8182";
 
-fn get(allocator: Allocator, easy: Easy) !void {
+fn get(easy: Easy) !void {
     {
-        println("GET with allocator");
-        const resp = try easy.fetchAlloc("https://httpbin.org/anything", allocator, .{});
-        defer resp.deinit();
+        println("GET without write context");
+        const resp = try easy.fetch("https://httpbin.org/anything", .{}, {});
 
-        const body = resp.body.?.slice();
-        std.debug.print("Status code: {d}\nBody: {s}\n", .{
-            resp.status_code,
-            body,
-        });
+        std.debug.print("Status code: {d}\n", .{resp.status_code});
     }
 
     {
         println("GET with fixed buffer");
         var buffer: [1024]u8 = undefined;
-        const resp = try easy.fetch("https://httpbin.org/anything", &buffer, .{});
-        defer resp.deinit();
-        const body = resp.body.?.slice();
+        var writeContext = curl.StaticContext.init(&buffer);
+        const resp = try easy.fetch("https://httpbin.org/anything", .{}, &writeContext);
         std.debug.print("Status code: {d}\nBody: {s}\n", .{
             resp.status_code,
-            body,
+            writeContext.asSlice(),
         });
     }
 }
@@ -37,9 +31,10 @@ fn post(allocator: Allocator, easy: Easy) !void {
     const payload =
         \\{"name": "John", "age": 15}
     ;
-    const resp = try easy.fetchAlloc(
+    var writeContext = curl.DynamicContext.init(allocator);
+    defer writeContext.deinit();
+    const resp = try easy.fetch(
         "https://httpbin.org/anything",
-        allocator,
         .{
             .method = .POST,
             .body = payload,
@@ -47,23 +42,25 @@ fn post(allocator: Allocator, easy: Easy) !void {
                 "Content-Type: application/json",
             },
         },
+        &writeContext,
     );
-    defer resp.deinit();
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        resp.body.?.slice(),
+        writeContext.asSlice(),
     });
 }
 
 fn upload(allocator: Allocator, easy: Easy) !void {
     const path = "LICENSE";
-    const resp = try easy.uploadAlloc(LOCAL_SERVER_ADDR ++ "/anything", path, allocator);
-    defer resp.deinit();
+    var writeContext = curl.DynamicContext.init(allocator);
+    defer writeContext.deinit();
+
+    const resp = try easy.upload(LOCAL_SERVER_ADDR ++ "/anything", path, &writeContext);
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        resp.body.?.slice(),
+        writeContext.asSlice(),
     });
 }
 
@@ -79,8 +76,9 @@ pub fn main() !void {
     });
     defer easy.deinit();
 
+    try easy.setVerbose(false);
     println("GET demo");
-    try get(allocator, easy);
+    try get(easy);
 
     println("POST demo");
     easy.reset();

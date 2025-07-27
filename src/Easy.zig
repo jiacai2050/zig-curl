@@ -49,18 +49,6 @@ pub const Headers = struct {
     }
 };
 
-const Body = union(enum) {
-    static: StaticBuffer,
-    dynamic: DynamicBuffer,
-
-    pub fn slice(self: Body) []const u8 {
-        return switch (self) {
-            .static => |s| s.data[0..s.size],
-            .dynamic => |d| d.items,
-        };
-    }
-};
-
 pub const FetchOptions = struct {
     method: Method = .GET,
     body: ?[]const u8 = null,
@@ -68,19 +56,9 @@ pub const FetchOptions = struct {
 };
 
 pub const Response = struct {
-    body: ?Body = null,
     status_code: i32,
 
     handle: *c.CURL,
-
-    pub fn deinit(self: Response) void {
-        if (self.body) |body| {
-            switch (body) {
-                .static => {},
-                .dynamic => |d| d.deinit(),
-            }
-        }
-    }
 
     fn polyfill_struct_curl_header() type {
         if (hasParseHeaderSupport()) {
@@ -361,19 +339,43 @@ pub fn setUnixSocketPath(self: Self, path: [:0]const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_UNIX_SOCKET_PATH, path.ptr));
 }
 
-pub fn setWritedata(self: Self, data: *anyopaque) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEDATA, data));
-}
-
 pub fn setPrivate(self: Self, data: *anyopaque) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PRIVATE, data));
 }
 
+pub fn setWritedata(self: Self, data: *anyopaque) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEDATA, data));
+}
+
+/// Set a write function that will be called with the response body.
+/// The function should return the number of bytes written, or 0 to indicate an error.
+/// There are two write functions provided by this library:
+/// 1. `discardWriteCallback` - does nothing, used when you don't care about the response body.
+/// 2. `stdoutWriteCallback` - writes the response body to stdout.
+///
+/// https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION.html
 pub fn setWritefunction(
     self: Self,
     func: *const fn ([*c]c_char, c_uint, c_uint, *anyopaque) callconv(.C) c_uint,
 ) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, func));
+}
+
+/// Set `WRITEDATA` to context and `WRITEFUNCTION` to a function that calls with the context.
+pub fn setWriteContext(
+    self: Self,
+    context: anytype,
+    comptime writeFunc: fn (@TypeOf(context), ptr: []const u8) usize,
+) !void {
+    try self.setWritedata(context);
+    try self.setWritefunction(struct {
+        fn write(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
+            const real_size = size * nmemb;
+            const ctx: @TypeOf(context) = @alignCast(@ptrCast(user_data));
+            const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];
+            return @intCast(writeFunc(ctx, data));
+        }
+    }.write);
 }
 
 pub fn setDebugdata(self: Self, data: *const anyopaque) !void {
@@ -422,8 +424,26 @@ pub fn perform(self: Self) !Response {
     return .{
         .status_code = @intCast(status_code),
         .handle = self.handle,
-        .body = null,
     };
+}
+
+fn setWriteContextInner(self: Self, context: anytype) !void {
+    const ctxType = @typeInfo(@TypeOf(context));
+    switch (ctxType) {
+        .void => {
+            // No write context, do nothing.
+            return;
+        },
+        .pointer => |ptr| {
+            if (comptime !@hasDecl(ptr.child, "write")) {
+                @compileError("writeContext must have a `write` function");
+            }
+            try self.setWriteContext(context, @field(ptr.child, "write"));
+        },
+        else => {
+            @compileError("writeContext must be a pointer or void type, current: " ++ @typeName(@TypeOf(context)));
+        },
+    }
 }
 
 /// Head issues a HEAD to the specified URL.
@@ -435,46 +455,16 @@ pub fn head(self: Self, url: [:0]const u8) !Response {
 }
 
 /// Fetch issues a request to the specified URL.
-/// Response body is allocated dynamically.
-pub fn fetchAlloc(
-    self: Self,
-    url: [:0]const u8,
-    allocator: Allocator,
-    options: FetchOptions,
-) !Response {
-    try self.setUrl(url);
-    try self.setMethod(options.method);
-    if (options.body) |body| {
-        try self.setPostFields(body);
-    }
-    var headers: ?Headers = null;
-    if (options.headers) |header_slice| {
-        headers = .{};
-        for (header_slice) |header| {
-            try headers.?.add(header);
-        }
-        try self.setHeaders(headers.?);
-    }
-
-    defer if (headers) |h| {
-        h.deinit();
-    };
-
-    var db = DynamicBuffer.init(allocator);
-    try self.setWritefunction(dynamicBufferWriteCallback);
-    try self.setWritedata(&db);
-    var resp = try self.perform();
-    resp.body = .{ .dynamic = db };
-    return resp;
-}
-
-/// Fetch issues a request to the specified URL.
-/// Modeled after fetch in Javascript.
+///
+/// `writeContext` is used to write the response body. There are two built-in write contexts:
+/// 1. `DynamicContext` - a dynamic buffer that grows as needed.
+/// 2. `StaticContext` - a fixed-size buffer that must be large enough to hold the response body.
+/// Or it can be `void`, which means you don't care about the response body.
 pub fn fetch(
     self: Self,
     url: [:0]const u8,
-    resp_buffer: ?[]u8,
     options: FetchOptions,
+    writeContext: anytype,
 ) !Response {
     try self.setUrl(url);
     try self.setMethod(options.method);
@@ -494,74 +484,39 @@ pub fn fetch(
         h.deinit();
     };
 
-    if (resp_buffer) |buffer| {
-        var sb = StaticBuffer.init(buffer);
-        try self.setWritefunction(staticBufferWriteCallback);
-        try self.setWritedata(&sb);
-        var resp = try self.perform();
-        resp.body = .{ .static = sb };
-        return resp;
-    }
+    try self.setWriteContextInner(writeContext);
 
     return try self.perform();
 }
 
 /// Upload issues a PUT request to upload file.
-pub fn upload(self: Self, url: [:0]const u8, path: []const u8, body_buffer: ?[]u8) !Response {
+/// `writeContext` is the same as in `fetch`, used to write the response body.
+pub fn upload(self: Self, url: [:0]const u8, path: []const u8, writeContext: anytype) !Response {
     var up = try Upload.init(path);
     defer up.deinit();
     try self.setUpload(&up);
-    try self.setUrl(url);
-    if (body_buffer) |buffer| {
-        var sb = StaticBuffer.init(buffer);
-        try self.setWritefunction(staticBufferWriteCallback);
-        try self.setWritedata(&sb);
-        var resp = try self.perform();
-        resp.body = .{ .static = sb };
-        return resp;
-    }
 
+    try self.setUrl(url);
+    try self.setWriteContextInner(writeContext);
     return try self.perform();
 }
 
-/// Upload issues a PUT request to upload file.
-pub fn uploadAlloc(self: Self, url: [:0]const u8, path: []const u8, allocator: Allocator) !Response {
-    var up = try Upload.init(path);
-    defer up.deinit();
-    try self.setUpload(&up);
-
-    try self.setUrl(url);
-    var db = DynamicBuffer.init(allocator);
-    try self.setWritefunction(dynamicBufferWriteCallback);
-    try self.setWritedata(&db);
-    var resp = try self.perform();
-    resp.body = .{ .dynamic = db };
-    return resp;
+/// A write callback that does nothing, used when you don't care about the response body.
+pub fn discardWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
+    _ = ptr;
+    _ = user_data;
+    return size * nmemb;
 }
 
-/// Used for write response via `DynamicBuffer` type.
-// https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION.html
-// size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata);
-pub fn dynamicBufferWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
+/// A write callback that writes the response body to stdout.
+pub fn stdoutWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
+    _ = user_data;
+    const stdout = std.io.getStdOut().writer();
     const real_size = size * nmemb;
-    var buffer: *DynamicBuffer = @alignCast(@ptrCast(user_data));
-    var typed_data: [*]u8 = @ptrCast(ptr);
-    buffer.appendSlice(typed_data[0..real_size]) catch return 0;
-    return real_size;
-}
-
-pub fn staticBufferWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
-    const real_size = size * nmemb;
-    var buffer: *StaticBuffer = @alignCast(@ptrCast(user_data));
-    const remaining = buffer.data.len - buffer.size;
-    if (remaining < real_size) {
-        // Buffer not large enough, return 0.
+    const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];
+    stdout.writeAll(data) catch {
         return 0;
-    }
-
-    var typed_data: [*]u8 = @ptrCast(ptr);
-    std.mem.copyForwards(u8, buffer.data[buffer.size..], typed_data[0..real_size]);
-    buffer.size += real_size;
+    };
     return real_size;
 }
 

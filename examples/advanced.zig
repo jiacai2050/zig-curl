@@ -40,23 +40,23 @@ fn putWithCustomHeader(allocator: Allocator, easy: Easy) !void {
     try easy.setMethod(.PUT);
     try easy.setVerbose(true);
     try easy.setPostFields(body);
-    var buf = curl.DynamicBuffer.init(allocator);
-    defer buf.deinit();
 
-    try easy.setWritedata(&buf);
-    try easy.setWritefunction(Easy.dynamicBufferWriteCallback);
+    var writeContext = curl.DynamicContext.init(allocator);
+    defer writeContext.deinit();
+    try easy.setWriteContext(&writeContext, curl.DynamicContext.write);
 
-    var resp = try easy.perform();
-    defer resp.deinit();
-
+    const resp = try easy.perform();
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        buf.items,
+        writeContext.asSlice(),
     });
 
-    const parsed = try std.json.parseFromSlice(Response, allocator, buf.items, .{
-        .ignore_unknown_fields = true,
-    });
+    const parsed = try std.json.parseFromSlice(
+        Response,
+        allocator,
+        writeContext.asSlice(),
+        .{ .ignore_unknown_fields = true },
+    );
     defer parsed.deinit();
 
     try std.testing.expectEqualDeep(
@@ -102,16 +102,13 @@ fn postMultiPart(allocator: Allocator, easy: Easy) !void {
     try easy.setMethod(.PUT);
     try easy.setMultiPart(multi_part);
     try easy.setVerbose(true);
-    var buf = curl.DynamicBuffer.init(allocator);
-    defer buf.deinit();
 
-    try easy.setWritedata(&buf);
-    try easy.setWritefunction(curl.Easy.dynamicBufferWriteCallback);
+    var writeContext = curl.DynamicContext.init(allocator);
+    defer writeContext.deinit();
+    try easy.setWriteContext(&writeContext, curl.DynamicContext.write);
 
-    var resp = try easy.perform();
-    defer resp.deinit();
-
-    std.debug.print("resp:{s}\n", .{buf.items});
+    const resp = try easy.perform();
+    std.debug.print("code: {d}, resp:{s}\n", .{ resp.status_code, writeContext.asSlice() });
 }
 
 pub fn main() !void {

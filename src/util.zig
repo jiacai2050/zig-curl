@@ -13,6 +13,63 @@ pub const StaticBuffer = struct {
     pub fn init(data: []u8) StaticBuffer {
         return .{ .data = data, .size = 0 };
     }
+
+    pub fn asSlice(self: *StaticBuffer) []const u8 {
+        return self.data[0..self.size];
+    }
+};
+
+pub const StaticContext = struct {
+    buffer: StaticBuffer,
+
+    pub fn init(buffer: []u8) StaticContext {
+        return .{ .buffer = .init(buffer) };
+    }
+
+    pub fn write(
+        ctx: *StaticContext,
+        data: []const u8,
+    ) usize {
+        if (ctx.buffer.size + data.len > ctx.buffer.data.len) {
+            // Not enough space in the buffer
+            return 0;
+        }
+        std.mem.copyForwards(u8, ctx.buffer.data[ctx.buffer.size..], data);
+        ctx.buffer.size += data.len;
+        return data.len;
+    }
+
+    pub fn asSlice(self: *StaticContext) []const u8 {
+        return self.buffer.asSlice();
+    }
+};
+
+pub const DynamicContext = struct {
+    buffer: DynamicBuffer,
+
+    pub fn init(allocator: Allocator) DynamicContext {
+        return .{ .buffer = DynamicBuffer.init(allocator) };
+    }
+
+    pub fn deinit(self: *DynamicContext) void {
+        self.buffer.deinit();
+    }
+
+    pub fn write(
+        ctx: *DynamicContext,
+        data: []const u8,
+    ) usize {
+        ctx.buffer.appendSlice(data) catch {
+            // Out of memory
+            return 0;
+        };
+
+        return data.len;
+    }
+
+    pub fn asSlice(self: *DynamicContext) []const u8 {
+        return self.buffer.items;
+    }
 };
 
 pub fn encode_base64(allocator: Allocator, input: []const u8) ![]const u8 {

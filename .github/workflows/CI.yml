@@ -67,9 +67,6 @@ jobs:
       - uses: mlugg/setup-zig@v1
         with:
           version: ${{ matrix.zig-version }}
-      - uses: actions/setup-go@v5
-        with:
-          go-version: 'stable'
       - name: Set Environment Variables
         run: |
           echo "ZIG_ARGS='-Dlink_vendor=false'" >> $GITHUB_ENV

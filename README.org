@@ -1,6 +1,6 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2025-05-18T21:07:57+0800
+#+LASTMOD: 2025-07-27T19:36:36+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -23,7 +23,13 @@ The vendored libraries consist of:
 | mbedtls | [[https://github.com/Mbed-TLS/mbedtls/tree/v3.6.0][3.6.0]]   |
 
 * Usage
+#+begin_src bash :results verbatim :exports results :wrap src zig
+cat examples/hello.zig
+#+end_src
+
+#+RESULTS:
 #+begin_src zig
+const std = @import("std");
 const curl = @import("curl");
 
 pub fn main() !void {
@@ -31,18 +37,25 @@ pub fn main() !void {
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const easy = try curl.Easy.init(.{});
+    const ca_bundle = try curl.allocCABundle(allocator);
+    defer ca_bundle.deinit();
+    const easy = try curl.Easy.init(.{
+        .ca_bundle = ca_bundle,
+    });
     defer easy.deinit();
 
-    const resp = try easy.fetchAlloc("http://httpbin.org/anything", allocator, .{});
-    defer resp.deinit();
+    var ctx = curl.DynamicContext.init(allocator);
+    defer ctx.deinit();
+    const resp = try easy.fetch("https://httpbin.org/anything", .{}, &ctx);
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        resp.body.?.slice(),
+        ctx.asSlice(),
     });
 }
 #+end_src
+
+
 See [[file:examples/basic.zig]], [[file:examples/advanced.zig]] for more usage.
 
 * Installation
