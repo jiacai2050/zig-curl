@@ -18,7 +18,7 @@ fn get(easy: Easy) !void {
     {
         println("GET with fixed buffer");
         var buffer: [1024]u8 = undefined;
-        var writeContext = curl.StaticContext.init(&buffer);
+        var writeContext = curl.FixedWriteContext.init(&buffer);
         const resp = try easy.fetch("https://httpbin.org/anything", .{}, &writeContext);
         std.debug.print("Status code: {d}\nBody: {s}\n", .{
             resp.status_code,
@@ -31,7 +31,7 @@ fn post(allocator: Allocator, easy: Easy) !void {
     const payload =
         \\{"name": "John", "age": 15}
     ;
-    var writeContext = curl.DynamicContext.init(allocator);
+    var writeContext = curl.ResizableWriteContext.init(allocator);
     defer writeContext.deinit();
     const resp = try easy.fetch(
         "https://httpbin.org/anything",
@@ -53,7 +53,7 @@ fn post(allocator: Allocator, easy: Easy) !void {
 
 fn upload(allocator: Allocator, easy: Easy) !void {
     const path = "LICENSE";
-    var writeContext = curl.DynamicContext.init(allocator);
+    var writeContext = curl.ResizableWriteContext.init(allocator);
     defer writeContext.deinit();
 
     const resp = try easy.upload(LOCAL_SERVER_ADDR ++ "/anything", path, &writeContext);

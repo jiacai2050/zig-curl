@@ -7,8 +7,7 @@ const mem = std.mem;
 const fmt = std.fmt;
 const Allocator = mem.Allocator;
 const checkCode = errors.checkCode;
-const DynamicBuffer = util.DynamicBuffer;
-const StaticBuffer = util.StaticBuffer;
+const ResizableBuffer = util.ResizableBuffer;
 
 const hasParseHeaderSupport = @import("util.zig").hasParseHeaderSupport;
 
@@ -17,7 +16,7 @@ const Self = @This();
 handle: *c.CURL,
 timeout_ms: usize,
 user_agent: [:0]const u8,
-ca_bundle: ?DynamicBuffer,
+ca_bundle: ?ResizableBuffer,
 
 pub const Method = enum {
     GET,
@@ -256,7 +255,7 @@ pub const Options = struct {
     // Note that the vendored libcurl is compiled with mbedtls and does not include a CA bundle,
     // so this should be set when link with vendored libcurl, otherwise https
     // requests will fail.
-    ca_bundle: ?DynamicBuffer = null,
+    ca_bundle: ?ResizableBuffer = null,
     /// The maximum time in milliseconds that the entire transfer operation to take.
     default_timeout_ms: usize = 30_000,
     default_user_agent: [:0]const u8 = "zig-curl/" ++ @import("build_info").version,
@@ -457,8 +456,8 @@ pub fn head(self: Self, url: [:0]const u8) !Response {
 /// Fetch issues a request to the specified URL.
 ///
 /// `writeContext` is used to write the response body. There are two built-in write contexts:
-/// 1. `DynamicContext` - a dynamic buffer that grows as needed.
-/// 2. `StaticContext` - a fixed-size buffer that must be large enough to hold the response body.
+/// 1. `ResizableWriteContext` - a resizable context that grows as needed to hold the response body.
+/// 2. `FixedWriteContext` - a fixed-size one that must be large enough to hold the response body.
 /// Or it can be `void`, which means you don't care about the response body.
 pub fn fetch(
     self: Self,

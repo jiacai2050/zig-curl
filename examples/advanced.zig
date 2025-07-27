@@ -41,9 +41,9 @@ fn putWithCustomHeader(allocator: Allocator, easy: Easy) !void {
     try easy.setVerbose(true);
     try easy.setPostFields(body);
 
-    var writeContext = curl.DynamicContext.init(allocator);
+    var writeContext = curl.ResizableWriteContext.init(allocator);
     defer writeContext.deinit();
-    try easy.setWriteContext(&writeContext, curl.DynamicContext.write);
+    try easy.setWriteContext(&writeContext, curl.ResizableWriteContext.write);
 
     const resp = try easy.perform();
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
@@ -103,9 +103,9 @@ fn postMultiPart(allocator: Allocator, easy: Easy) !void {
     try easy.setMultiPart(multi_part);
     try easy.setVerbose(true);
 
-    var writeContext = curl.DynamicContext.init(allocator);
+    var writeContext = curl.ResizableWriteContext.init(allocator);
     defer writeContext.deinit();
-    try easy.setWriteContext(&writeContext, curl.DynamicContext.write);
+    try easy.setWriteContext(&writeContext, curl.ResizableWriteContext.write);
 
     const resp = try easy.perform();
     std.debug.print("code: {d}, resp:{s}\n", .{ resp.status_code, writeContext.asSlice() });

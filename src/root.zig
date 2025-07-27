@@ -4,8 +4,8 @@ pub const checkCode = @import("errors.zig").checkCode;
 
 pub const Easy = @import("Easy.zig");
 pub const Multi = @import("Multi.zig");
-pub const DynamicContext = util.DynamicContext;
-pub const StaticContext = util.StaticContext;
+pub const ResizableWriteContext = util.ResizableWriteContext;
+pub const FixedWriteContext = util.FixedWriteContext;
 
 pub const printLibcurlVersion = util.printLibcurlVersion;
 pub const hasParseHeaderSupport = util.hasParseHeaderSupport;

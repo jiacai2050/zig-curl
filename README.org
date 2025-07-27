@@ -1,6 +1,6 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2025-07-27T19:36:36+0800
+#+LASTMOD: 2025-07-27T20:02:08+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -44,7 +44,7 @@ pub fn main() !void {
     });
     defer easy.deinit();
 
-    var ctx = curl.DynamicContext.init(allocator);
+    var ctx = curl.ResizableWriteContext.init(allocator);
     defer ctx.deinit();
     const resp = try easy.fetch("https://httpbin.org/anything", .{}, &ctx);
 

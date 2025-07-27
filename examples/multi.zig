@@ -8,10 +8,10 @@ const Multi = curl.Multi;
 const c = curl.libcurl;
 const checkCode = curl.checkCode;
 
-fn newEasy(ctx: *curl.DynamicContext, url: [:0]const u8) !Easy {
+fn newEasy(ctx: *curl.ResizableWriteContext, url: [:0]const u8) !Easy {
     const easy = try Easy.init(.{});
     try easy.setUrl(url);
-    try easy.setWriteContext(ctx, curl.DynamicContext.write);
+    try easy.setWriteContext(ctx, curl.ResizableWriteContext.write);
     // CURLOPT_PRIVATE allows us to store a pointer to the ctx in the easy handle
     // so we can retrieve it later in the callback.
     try easy.setPrivate(ctx);
@@ -27,9 +27,9 @@ pub fn main() !void {
     const multi = try Multi.init();
     defer multi.deinit();
 
-    var ctx1 = curl.DynamicContext.init(allocator);
+    var ctx1 = curl.ResizableWriteContext.init(allocator);
     defer ctx1.deinit();
-    var ctx2 = curl.DynamicContext.init(allocator);
+    var ctx2 = curl.ResizableWriteContext.init(allocator);
     defer ctx2.deinit();
 
     try multi.addHandle(try newEasy(&ctx1, "http://httpbin.org/headers"));
@@ -69,7 +69,7 @@ pub fn main() !void {
         // Get the private data (buffer) associated with this handle
         var private_data: ?*anyopaque = null;
         try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_PRIVATE, &private_data));
-        const ctx: *curl.DynamicContext = @ptrCast(@alignCast(private_data.?));
+        const ctx: *curl.ResizableWriteContext = @ptrCast(@alignCast(private_data.?));
 
         std.debug.print("Response body: {s}\n", .{ctx.asSlice()});
     }

@@ -13,7 +13,7 @@ pub fn main() !void {
     });
     defer easy.deinit();
 
-    var ctx = curl.DynamicContext.init(allocator);
+    var ctx = curl.ResizableWriteContext.init(allocator);
     defer ctx.deinit();
     const resp = try easy.fetch("https://httpbin.org/anything", .{}, &ctx);
 

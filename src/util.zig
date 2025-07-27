@@ -4,30 +4,30 @@ pub const c = @cImport({
 });
 const Allocator = std.mem.Allocator;
 const Encoder = std.base64.standard.Encoder;
-pub const DynamicBuffer = std.ArrayList(u8);
-pub const StaticBuffer = struct {
+pub const ResizableBuffer = std.ArrayList(u8);
+pub const FixedBuffer = struct {
     data: []u8,
     // How many bytes are used in the buffer.
     size: usize,
 
-    pub fn init(data: []u8) StaticBuffer {
+    pub fn init(data: []u8) FixedBuffer {
         return .{ .data = data, .size = 0 };
     }
 
-    pub fn asSlice(self: *StaticBuffer) []const u8 {
+    pub fn asSlice(self: *FixedBuffer) []const u8 {
         return self.data[0..self.size];
     }
 };
 
-pub const StaticContext = struct {
-    buffer: StaticBuffer,
+pub const FixedWriteContext = struct {
+    buffer: FixedBuffer,
 
-    pub fn init(buffer: []u8) StaticContext {
+    pub fn init(buffer: []u8) FixedWriteContext {
         return .{ .buffer = .init(buffer) };
     }
 
     pub fn write(
-        ctx: *StaticContext,
+        ctx: *FixedWriteContext,
         data: []const u8,
     ) usize {
         if (ctx.buffer.size + data.len > ctx.buffer.data.len) {
@@ -39,24 +39,24 @@ pub const StaticContext = struct {
         return data.len;
     }
 
-    pub fn asSlice(self: *StaticContext) []const u8 {
+    pub fn asSlice(self: *FixedWriteContext) []const u8 {
         return self.buffer.asSlice();
     }
 };
 
-pub const DynamicContext = struct {
-    buffer: DynamicBuffer,
+pub const ResizableWriteContext = struct {
+    buffer: ResizableBuffer,
 
-    pub fn init(allocator: Allocator) DynamicContext {
-        return .{ .buffer = DynamicBuffer.init(allocator) };
+    pub fn init(allocator: Allocator) ResizableWriteContext {
+        return .{ .buffer = ResizableBuffer.init(allocator) };
     }
 
-    pub fn deinit(self: *DynamicContext) void {
+    pub fn deinit(self: *ResizableWriteContext) void {
         self.buffer.deinit();
     }
 
     pub fn write(
-        ctx: *DynamicContext,
+        ctx: *ResizableWriteContext,
         data: []const u8,
     ) usize {
         ctx.buffer.appendSlice(data) catch {
@@ -67,7 +67,7 @@ pub const DynamicContext = struct {
         return data.len;
     }
 
-    pub fn asSlice(self: *DynamicContext) []const u8 {
+    pub fn asSlice(self: *ResizableWriteContext) []const u8 {
         return self.buffer.items;
     }
 };
@@ -159,11 +159,11 @@ test "url encode" {
 const CERT_MARKER_BEGIN = "-----BEGIN CERTIFICATE-----";
 const CERT_MARKER_END = "\n-----END CERTIFICATE-----\n";
 
-pub fn allocCABundle(allocator: std.mem.Allocator) !DynamicBuffer {
+pub fn allocCABundle(allocator: std.mem.Allocator) !ResizableBuffer {
     var bundle: std.crypto.Certificate.Bundle = .{};
     defer bundle.deinit(allocator);
 
-    var blob = DynamicBuffer.init(allocator);
+    var blob = ResizableBuffer.init(allocator);
     try bundle.rescan(allocator);
     var iter = bundle.map.iterator();
     while (iter.next()) |entry| {
