@@ -1,11 +1,12 @@
 const std = @import("std");
 const util = @import("util.zig");
+const types = @import("types.zig");
 pub const checkCode = @import("errors.zig").checkCode;
 
 pub const Easy = @import("Easy.zig");
 pub const Multi = @import("Multi.zig");
-pub const ResizableWriteContext = util.ResizableWriteContext;
-pub const FixedWriteContext = util.FixedWriteContext;
+pub const ResizableResponseWriter = types.ResizableResponseWriter;
+pub const FixedResponseWriter = types.FixedResponseWriter;
 
 pub const printLibcurlVersion = util.printLibcurlVersion;
 pub const hasParseHeaderSupport = util.hasParseHeaderSupport;

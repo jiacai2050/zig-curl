@@ -41,20 +41,20 @@ fn putWithCustomHeader(allocator: Allocator, easy: Easy) !void {
     try easy.setVerbose(true);
     try easy.setPostFields(body);
 
-    var writeContext = curl.ResizableWriteContext.init(allocator);
-    defer writeContext.deinit();
-    try easy.setWriteContext(&writeContext, curl.ResizableWriteContext.write);
+    var writer = curl.ResizableResponseWriter.init(allocator);
+    defer writer.deinit();
+    try easy.setAnyWriter(&writer.asAny());
 
     const resp = try easy.perform();
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        writeContext.asSlice(),
+        writer.asSlice(),
     });
 
     const parsed = try std.json.parseFromSlice(
         Response,
         allocator,
-        writeContext.asSlice(),
+        writer.asSlice(),
         .{ .ignore_unknown_fields = true },
     );
     defer parsed.deinit();
@@ -103,12 +103,12 @@ fn postMultiPart(allocator: Allocator, easy: Easy) !void {
     try easy.setMultiPart(multi_part);
     try easy.setVerbose(true);
 
-    var writeContext = curl.ResizableWriteContext.init(allocator);
-    defer writeContext.deinit();
-    try easy.setWriteContext(&writeContext, curl.ResizableWriteContext.write);
+    var writer = curl.ResizableResponseWriter.init(allocator);
+    defer writer.deinit();
+    try easy.setAnyWriter(&writer.asAny());
 
     const resp = try easy.perform();
-    std.debug.print("code: {d}, resp:{s}\n", .{ resp.status_code, writeContext.asSlice() });
+    std.debug.print("code: {d}, resp:{s}\n", .{ resp.status_code, writer.asSlice() });
 }
 
 pub fn main() !void {

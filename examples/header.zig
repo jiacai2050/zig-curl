@@ -7,7 +7,7 @@ fn iterateHeaders(easy: Easy) !void {
     // Reset old options, e.g. headers.
     easy.reset();
 
-    const resp = try easy.fetch("https://httpbin.org/response-headers?X-Foo=1&X-Foo=2&X-Foo=3", .{}, {});
+    const resp = try easy.fetch("https://httpbin.org/response-headers?X-Foo=1&X-Foo=2&X-Foo=3", .{});
 
     std.debug.print("Iterating all headers...\n", .{});
     {
@@ -31,7 +31,7 @@ fn iterateHeaders(easy: Easy) !void {
 
 fn iterateRedirectedHeaders(easy: Easy) !void {
     try easy.setFollowLocation(true);
-    const resp = try easy.fetch("https://httpbin.org/redirect/1", .{}, {});
+    const resp = try easy.fetch("https://httpbin.org/redirect/1", .{});
 
     const redirects = try resp.getRedirectCount();
     try std.testing.expectEqual(redirects, 1);
