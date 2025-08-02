@@ -4,73 +4,7 @@ pub const c = @cImport({
 });
 const Allocator = std.mem.Allocator;
 const Encoder = std.base64.standard.Encoder;
-pub const ResizableBuffer = std.ArrayList(u8);
-pub const FixedBuffer = struct {
-    data: []u8,
-    // How many bytes are used in the buffer.
-    size: usize,
-
-    pub fn init(data: []u8) FixedBuffer {
-        return .{ .data = data, .size = 0 };
-    }
-
-    pub fn asSlice(self: *FixedBuffer) []const u8 {
-        return self.data[0..self.size];
-    }
-};
-
-pub const FixedWriteContext = struct {
-    buffer: FixedBuffer,
-
-    pub fn init(buffer: []u8) FixedWriteContext {
-        return .{ .buffer = .init(buffer) };
-    }
-
-    pub fn write(
-        ctx: *FixedWriteContext,
-        data: []const u8,
-    ) usize {
-        if (ctx.buffer.size + data.len > ctx.buffer.data.len) {
-            // Not enough space in the buffer
-            return 0;
-        }
-        std.mem.copyForwards(u8, ctx.buffer.data[ctx.buffer.size..], data);
-        ctx.buffer.size += data.len;
-        return data.len;
-    }
-
-    pub fn asSlice(self: *FixedWriteContext) []const u8 {
-        return self.buffer.asSlice();
-    }
-};
-
-pub const ResizableWriteContext = struct {
-    buffer: ResizableBuffer,
-
-    pub fn init(allocator: Allocator) ResizableWriteContext {
-        return .{ .buffer = ResizableBuffer.init(allocator) };
-    }
-
-    pub fn deinit(self: *ResizableWriteContext) void {
-        self.buffer.deinit();
-    }
-
-    pub fn write(
-        ctx: *ResizableWriteContext,
-        data: []const u8,
-    ) usize {
-        ctx.buffer.appendSlice(data) catch {
-            // Out of memory
-            return 0;
-        };
-
-        return data.len;
-    }
-
-    pub fn asSlice(self: *ResizableWriteContext) []const u8 {
-        return self.buffer.items;
-    }
-};
+const ResizableBuffer = @import("types.zig").ResizableBuffer;
 
 pub fn encode_base64(allocator: Allocator, input: []const u8) ![]const u8 {
     const encoded_len = Encoder.calcSize(input.len);

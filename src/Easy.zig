@@ -1,13 +1,15 @@
 const std = @import("std");
 const errors = @import("errors.zig");
 const util = @import("util.zig");
+const types = @import("types.zig");
 const c = util.c;
 
 const mem = std.mem;
 const fmt = std.fmt;
+const AnyWriter = std.io.AnyWriter;
 const Allocator = mem.Allocator;
 const checkCode = errors.checkCode;
-const ResizableBuffer = util.ResizableBuffer;
+const ResizableBuffer = types.ResizableBuffer;
 
 const hasParseHeaderSupport = @import("util.zig").hasParseHeaderSupport;
 
@@ -52,6 +54,7 @@ pub const FetchOptions = struct {
     method: Method = .GET,
     body: ?[]const u8 = null,
     headers: ?[]const [:0]const u8 = null,
+    response_writer: ?AnyWriter = null,
 };
 
 pub const Response = struct {
@@ -338,11 +341,11 @@ pub fn setUnixSocketPath(self: Self, path: [:0]const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_UNIX_SOCKET_PATH, path.ptr));
 }
 
-pub fn setPrivate(self: Self, data: *anyopaque) !void {
+pub fn setPrivate(self: Self, data: *const anyopaque) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PRIVATE, data));
 }
 
-pub fn setWritedata(self: Self, data: *anyopaque) !void {
+pub fn setWritedata(self: Self, data: *const anyopaque) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEDATA, data));
 }
 
@@ -360,19 +363,21 @@ pub fn setWritefunction(
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, func));
 }
 
-/// Set `WRITEDATA` to context and `WRITEFUNCTION` to a function that calls with the context.
-pub fn setWriteContext(
+/// Set `WRITEDATA` to AnyWriter and `WRITEFUNCTION` to a function that calls with the writer.
+pub fn setAnyWriter(
     self: Self,
-    context: anytype,
-    comptime writeFunc: fn (@TypeOf(context), ptr: []const u8) usize,
+    any_writer: *const AnyWriter,
 ) !void {
-    try self.setWritedata(context);
+    try self.setWritedata(any_writer);
     try self.setWritefunction(struct {
         fn write(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
             const real_size = size * nmemb;
-            const ctx: @TypeOf(context) = @alignCast(@ptrCast(user_data));
             const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];
-            return @intCast(writeFunc(ctx, data));
+            const writer: *const AnyWriter = @alignCast(@ptrCast(user_data));
+            const ret = writer.write(data) catch {
+                return 0; // Indicate an error
+            };
+            return @intCast(ret);
         }
     }.write);
 }
@@ -426,25 +431,6 @@ pub fn perform(self: Self) !Response {
     };
 }
 
-fn setWriteContextInner(self: Self, context: anytype) !void {
-    const ctxType = @typeInfo(@TypeOf(context));
-    switch (ctxType) {
-        .void => {
-            // No write context, do nothing.
-            return;
-        },
-        .pointer => |ptr| {
-            if (comptime !@hasDecl(ptr.child, "write")) {
-                @compileError("writeContext must have a `write` function");
-            }
-            try self.setWriteContext(context, @field(ptr.child, "write"));
-        },
-        else => {
-            @compileError("writeContext must be a pointer or void type, current: " ++ @typeName(@TypeOf(context)));
-        },
-    }
-}
-
 /// Head issues a HEAD to the specified URL.
 pub fn head(self: Self, url: [:0]const u8) !Response {
     try self.setUrl(url);
@@ -463,7 +449,6 @@ pub fn fetch(
     self: Self,
     url: [:0]const u8,
     options: FetchOptions,
-    writeContext: anytype,
 ) !Response {
     try self.setUrl(url);
     try self.setMethod(options.method);
@@ -483,20 +468,22 @@ pub fn fetch(
         h.deinit();
     };
 
-    try self.setWriteContextInner(writeContext);
+    if (options.response_writer) |writer| {
+        try self.setAnyWriter(&writer);
+    }
 
     return try self.perform();
 }
 
 /// Upload issues a PUT request to upload file.
 /// `writeContext` is the same as in `fetch`, used to write the response body.
-pub fn upload(self: Self, url: [:0]const u8, path: []const u8, writeContext: anytype) !Response {
+pub fn upload(self: Self, url: [:0]const u8, path: []const u8, any_writer: AnyWriter) !Response {
     var up = try Upload.init(path);
     defer up.deinit();
     try self.setUpload(&up);
 
     try self.setUrl(url);
-    try self.setWriteContextInner(writeContext);
+    try self.setAnyWriter(&any_writer);
     return try self.perform();
 }
 

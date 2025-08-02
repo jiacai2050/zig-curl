@@ -10,7 +10,7 @@ const LOCAL_SERVER_ADDR = "http://localhost:8182";
 fn get(easy: Easy) !void {
     {
         println("GET without write context");
-        const resp = try easy.fetch("https://httpbin.org/anything", .{}, {});
+        const resp = try easy.fetch("https://httpbin.org/anything", .{});
 
         std.debug.print("Status code: {d}\n", .{resp.status_code});
     }
@@ -18,11 +18,13 @@ fn get(easy: Easy) !void {
     {
         println("GET with fixed buffer");
         var buffer: [1024]u8 = undefined;
-        var writeContext = curl.FixedWriteContext.init(&buffer);
-        const resp = try easy.fetch("https://httpbin.org/anything", .{}, &writeContext);
+        var writer = curl.FixedResponseWriter.init(&buffer);
+        const resp = try easy.fetch("https://httpbin.org/anything", .{
+            .response_writer = writer.asAny(),
+        });
         std.debug.print("Status code: {d}\nBody: {s}\n", .{
             resp.status_code,
-            writeContext.asSlice(),
+            writer.asSlice(),
         });
     }
 }
@@ -31,8 +33,8 @@ fn post(allocator: Allocator, easy: Easy) !void {
     const payload =
         \\{"name": "John", "age": 15}
     ;
-    var writeContext = curl.ResizableWriteContext.init(allocator);
-    defer writeContext.deinit();
+    var writer = curl.ResizableResponseWriter.init(allocator);
+    defer writer.deinit();
     const resp = try easy.fetch(
         "https://httpbin.org/anything",
         .{
@@ -41,26 +43,26 @@ fn post(allocator: Allocator, easy: Easy) !void {
             .headers = &.{
                 "Content-Type: application/json",
             },
+            .response_writer = writer.asAny(),
         },
-        &writeContext,
     );
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        writeContext.asSlice(),
+        writer.asSlice(),
     });
 }
 
 fn upload(allocator: Allocator, easy: Easy) !void {
     const path = "LICENSE";
-    var writeContext = curl.ResizableWriteContext.init(allocator);
-    defer writeContext.deinit();
+    var writer = curl.ResizableResponseWriter.init(allocator);
+    defer writer.deinit();
 
-    const resp = try easy.upload(LOCAL_SERVER_ADDR ++ "/anything", path, &writeContext);
+    const resp = try easy.upload(LOCAL_SERVER_ADDR ++ "/anything", path, writer.asAny());
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        writeContext.asSlice(),
+        writer.asSlice(),
     });
 }
 

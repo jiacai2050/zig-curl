@@ -13,12 +13,14 @@ pub fn main() !void {
     });
     defer easy.deinit();
 
-    var ctx = curl.ResizableWriteContext.init(allocator);
-    defer ctx.deinit();
-    const resp = try easy.fetch("https://httpbin.org/anything", .{}, &ctx);
+    var writer = curl.ResizableResponseWriter.init(allocator);
+    defer writer.deinit();
+    const resp = try easy.fetch("https://httpbin.org/anything", .{
+        .response_writer = writer.asAny(),
+    });
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        ctx.asSlice(),
+        writer.asSlice(),
     });
 }
