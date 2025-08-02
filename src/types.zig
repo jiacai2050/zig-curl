@@ -48,7 +48,7 @@ pub const FixedResponseWriter = struct {
         return .{ .context = @ptrCast(self), .writeFn = Self.write };
     }
 
-    pub fn asSlice(self: *FixedResponseWriter) []const u8 {
+    pub fn asSlice(self: FixedResponseWriter) []const u8 {
         return self.buffer[0..self.size];
     }
 };
@@ -62,7 +62,7 @@ pub const ResizableResponseWriter = struct {
         return .{ .buffer = ResizableBuffer.init(allocator) };
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: Self) void {
         self.buffer.deinit();
     }
 
@@ -79,7 +79,7 @@ pub const ResizableResponseWriter = struct {
         return .{ .context = @ptrCast(self), .writeFn = Self.write };
     }
 
-    pub fn asSlice(self: *Self) []const u8 {
+    pub fn asSlice(self: *const Self) []const u8 {
         return self.buffer.items;
     }
 };

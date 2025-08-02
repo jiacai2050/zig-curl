@@ -72,8 +72,8 @@ pub fn main() !void {
         // Get the private data (buffer) associated with this handle
         var private_data: ?*anyopaque = null;
         try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_PRIVATE, &private_data));
-        const ctx: *curl.ResizableResponseWriter = @ptrCast(@alignCast(private_data.?));
+        const writer: *curl.ResizableResponseWriter = @ptrCast(@alignCast(private_data.?));
 
-        std.debug.print("Response body: {s}\n", .{ctx.asSlice()});
+        std.debug.print("Response body: {s}\n", .{writer.asSlice()});
     }
 }
