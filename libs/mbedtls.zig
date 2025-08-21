@@ -2,11 +2,15 @@ const std = @import("std");
 const ResolvedTarget = std.Build.ResolvedTarget;
 
 pub fn create(b: *std.Build, target: ResolvedTarget, optimize: std.builtin.OptimizeMode) ?*std.Build.Step.Compile {
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addLibrary(.{
+        .linkage = .static,
         .name = "mbedtls",
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .root_source_file = null,
+        }),
     });
 
     const mbedtls_dep = b.lazyDependency("mbedtls", .{
