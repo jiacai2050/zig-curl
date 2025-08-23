@@ -26,7 +26,7 @@ jobs:
         zig-version: [0.15.1]
     steps:
       - uses: actions/checkout@v4
-      - uses: mlugg/setup-zig@v1
+      - uses: mlugg/setup-zig@v2
         with:
           version: ${{ matrix.zig-version }}
       - uses: actions/setup-go@v5
@@ -64,7 +64,7 @@ jobs:
         zig-version: [0.15.1]
     steps:
       - uses: actions/checkout@v4
-      - uses: mlugg/setup-zig@v1
+      - uses: mlugg/setup-zig@v2
         with:
           version: ${{ matrix.zig-version }}
       - name: Set Environment Variables
