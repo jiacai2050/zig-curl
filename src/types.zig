@@ -35,7 +35,7 @@ pub const FixedResponseWriter = struct {
         w: *const anyopaque,
         data: []const u8,
     ) anyerror!usize {
-        var writer: *Self = @ptrCast(@alignCast(@constCast(w)));
+        var writer: *Self = @alignCast(@constCast(@ptrCast(w)));
         if (writer.size + data.len > writer.buffer.len) {
             return error.BufferOverflow;
         }
@@ -70,7 +70,7 @@ pub const ResizableResponseWriter = struct {
         any: *const anyopaque,
         data: []const u8,
     ) anyerror!usize {
-        var writer: *Self = @ptrCast(@alignCast(@constCast(any)));
+        var writer: *Self = @alignCast(@constCast(@ptrCast(any)));
         try writer.buffer.appendSlice(data);
         return data.len;
     }

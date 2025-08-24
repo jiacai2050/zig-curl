@@ -9,7 +9,6 @@ pub fn create(b: *std.Build, target: ResolvedTarget, optimize: std.builtin.Optim
             .target = target,
             .optimize = optimize,
             .link_libc = true,
-            .root_source_file = null,
         }),
     });
 
