@@ -241,7 +241,7 @@ pub const Upload = struct {
     }
 
     pub fn readFunction(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
-        const up: *Upload = @alignCast(@ptrCast(user_data));
+        const up: *Upload = @ptrCast(@alignCast(user_data));
         const max_length = @min(size * nmemb, up.file_len);
         var buf: [*]u8 = @ptrCast(ptr);
         const n = up.file.read(buf[0..max_length]) catch |e| {
@@ -373,7 +373,7 @@ pub fn setAnyWriter(
         fn write(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
             const real_size = size * nmemb;
             const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];
-            const writer: *const AnyWriter = @alignCast(@ptrCast(user_data));
+            const writer: *const AnyWriter = @ptrCast(@alignCast(user_data));
             const ret = writer.write(data) catch {
                 return 0; // Indicate an error
             };
