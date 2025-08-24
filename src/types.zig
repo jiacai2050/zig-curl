@@ -16,7 +16,7 @@ const Allocator = std.mem.Allocator;
 //     ctx: *anyopaque,
 // };
 
-pub const ResizableBuffer = std.ArrayList(u8);
+pub const ResizableBuffer = std.array_list.Managed(u8);
 
 pub const FixedResponseWriter = struct {
     buffer: []u8,
@@ -35,7 +35,7 @@ pub const FixedResponseWriter = struct {
         w: *const anyopaque,
         data: []const u8,
     ) anyerror!usize {
-        var writer: *Self = @alignCast(@constCast(@ptrCast(w)));
+        var writer: *Self = @ptrCast(@alignCast(@constCast(w)));
         if (writer.size + data.len > writer.buffer.len) {
             return error.BufferOverflow;
         }
@@ -70,7 +70,7 @@ pub const ResizableResponseWriter = struct {
         any: *const anyopaque,
         data: []const u8,
     ) anyerror!usize {
-        var writer: *Self = @alignCast(@constCast(@ptrCast(any)));
+        var writer: *Self = @ptrCast(@alignCast(@constCast(any)));
         try writer.buffer.appendSlice(data);
         return data.len;
     }

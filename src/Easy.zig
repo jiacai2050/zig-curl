@@ -232,16 +232,16 @@ pub const Upload = struct {
 
     pub fn init(path: []const u8) !Upload {
         const file = try std.fs.cwd().openFile(path, .{});
-        const md = try file.metadata();
-        return .{ .file = file, .file_len = md.size() };
+        const stat = try file.stat();
+        return .{ .file = file, .file_len = stat.size };
     }
 
     pub fn deinit(self: Upload) void {
         self.file.close();
     }
 
-    pub fn readFunction(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
-        const up: *Upload = @alignCast(@ptrCast(user_data));
+    pub fn readFunction(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
+        const up: *Upload = @ptrCast(@alignCast(user_data));
         const max_length = @min(size * nmemb, up.file_len);
         var buf: [*]u8 = @ptrCast(ptr);
         const n = up.file.read(buf[0..max_length]) catch |e| {
@@ -358,7 +358,7 @@ pub fn setWritedata(self: Self, data: *const anyopaque) !void {
 /// https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION.html
 pub fn setWritefunction(
     self: Self,
-    func: *const fn ([*c]c_char, c_uint, c_uint, *anyopaque) callconv(.C) c_uint,
+    func: *const fn ([*c]c_char, c_uint, c_uint, *anyopaque) callconv(.c) c_uint,
 ) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, func));
 }
@@ -370,10 +370,10 @@ pub fn setAnyWriter(
 ) !void {
     try self.setWritedata(any_writer);
     try self.setWritefunction(struct {
-        fn write(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
+        fn write(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
             const real_size = size * nmemb;
             const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];
-            const writer: *const AnyWriter = @alignCast(@ptrCast(user_data));
+            const writer: *const AnyWriter = @ptrCast(@alignCast(user_data));
             const ret = writer.write(data) catch {
                 return 0; // Indicate an error
             };
@@ -388,7 +388,7 @@ pub fn setDebugdata(self: Self, data: *const anyopaque) !void {
 
 pub fn setDebugfunction(
     self: Self,
-    func: *const fn (*c.CURL, c.curl_infotype, [*]c_char, c_uint, *anyopaque) callconv(.C) c_int,
+    func: *const fn (*c.CURL, c.curl_infotype, [*]c_char, c_uint, *anyopaque) callconv(.c) c_int,
 ) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_DEBUGFUNCTION, func));
 }
@@ -488,14 +488,14 @@ pub fn upload(self: Self, url: [:0]const u8, path: []const u8, any_writer: AnyWr
 }
 
 /// A write callback that does nothing, used when you don't care about the response body.
-pub fn discardWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
+pub fn discardWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
     _ = ptr;
     _ = user_data;
     return size * nmemb;
 }
 
 /// A write callback that writes the response body to stdout.
-pub fn stdoutWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.C) c_uint {
+pub fn stdoutWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
     _ = user_data;
     const stdout = std.io.getStdOut().writer();
     const real_size = size * nmemb;
