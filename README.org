@@ -1,6 +1,6 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2025-08-02T11:33:35+0800
+#+LASTMOD: 2025-08-24T10:24:23+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -10,10 +10,6 @@
 [[https://ci.codeberg.org/repos/13257][https://ci.codeberg.org/api/badges/13257/status.svg]]
 
 Zig bindings for [[https://curl.haxx.se/libcurl/][libcurl]], a free and easy-to-use client-side URL transfer library.
-
-#+begin_quote
-This package is in early stage, although the core functionality works right now, the API is still subject to changes.
-#+end_quote
 
 The vendored libraries consist of:
 | Library | Version |
