@@ -39,10 +39,12 @@ pub fn build(b: *Build) !void {
     }
 
     const main_tests = b.addTest(.{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/root.zig"),
+            .link_libc = true,
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     if (libcurl) |lib| {
@@ -59,10 +61,12 @@ pub fn build(b: *Build) !void {
     inline for (.{ "basic", "advanced", "multi" }) |name| {
         const check_exe = b.addExecutable(.{
             .name = "check-" ++ name,
-            .root_source_file = b.path("examples/" ++ name ++ ".zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("examples/" ++ name ++ ".zig"),
+                .link_libc = true,
+                .target = target,
+                .optimize = optimize,
+            }),
         });
 
         check_exe.root_module.addImport(MODULE_NAME, module);
@@ -98,10 +102,12 @@ fn addExample(
 ) !void {
     const exe = b.addExecutable(.{
         .name = name,
-        .root_source_file = b.path("examples/" ++ name ++ ".zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/" ++ name ++ ".zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
     });
     b.installArtifact(exe);
 
@@ -129,16 +135,16 @@ const Manifest = struct {
 
 fn parseManifest(b: *Build) !Manifest {
     const input = @embedFile("build.zig.zon");
-    var status: std.zon.parse.Status = .{};
-    defer status.deinit(b.allocator);
+    var diagnostics: std.zon.parse.Diagnostics = .{};
+    defer diagnostics.deinit(b.allocator);
     const parsed = std.zon.parse.fromSlice(
         Manifest,
         b.allocator,
         input,
-        &status,
+        &diagnostics,
         .{ .free_on_error = true, .ignore_unknown_fields = true },
     ) catch |err| {
-        std.debug.print("Parse status: {any}\n", .{status});
+        std.debug.print("Parse diagnostics:\n{f}\n", .{diagnostics});
         return err;
     };
 
