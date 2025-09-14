@@ -18,13 +18,13 @@ fn get(easy: Easy) !void {
     {
         println("GET with fixed buffer");
         var buffer: [1024]u8 = undefined;
-        var writer = curl.FixedResponseWriter.init(&buffer);
+        var writer = std.Io.Writer.fixed(&buffer);
         const resp = try easy.fetch("https://httpbin.org/anything", .{
-            .response_writer = writer.asAny(),
+            .writer = &writer,
         });
         std.debug.print("Status code: {d}\nBody: {s}\n", .{
             resp.status_code,
-            writer.asSlice(),
+            writer.buffered(),
         });
     }
 }
@@ -33,7 +33,8 @@ fn post(allocator: Allocator, easy: Easy) !void {
     const payload =
         \\{"name": "John", "age": 15}
     ;
-    var writer = curl.ResizableResponseWriter.init(allocator);
+
+    var writer = std.Io.Writer.Allocating.init(allocator);
     defer writer.deinit();
     const resp = try easy.fetch(
         "https://httpbin.org/anything",
@@ -43,26 +44,27 @@ fn post(allocator: Allocator, easy: Easy) !void {
             .headers = &.{
                 "Content-Type: application/json",
             },
-            .response_writer = writer.asAny(),
+            .writer = &writer.writer,
         },
     );
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        writer.asSlice(),
+        writer.writer.buffered(),
     });
 }
 
 fn upload(allocator: Allocator, easy: Easy) !void {
     const path = "LICENSE";
-    var writer = curl.ResizableResponseWriter.init(allocator);
+    var writer = std.Io.Writer.Allocating.init(allocator);
+
     defer writer.deinit();
 
-    const resp = try easy.upload(LOCAL_SERVER_ADDR ++ "/anything", path, writer.asAny());
+    const resp = try easy.upload(LOCAL_SERVER_ADDR ++ "/anything", path, &writer.writer);
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        writer.asSlice(),
+        writer.writer.buffered(),
     });
 }
 

@@ -5,8 +5,6 @@ pub const checkCode = @import("errors.zig").checkCode;
 
 pub const Easy = @import("Easy.zig");
 pub const Multi = @import("Multi.zig");
-pub const ResizableResponseWriter = types.ResizableResponseWriter;
-pub const FixedResponseWriter = types.FixedResponseWriter;
 
 pub const printLibcurlVersion = util.printLibcurlVersion;
 pub const hasParseHeaderSupport = util.hasParseHeaderSupport;

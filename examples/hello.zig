@@ -13,14 +13,14 @@ pub fn main() !void {
     });
     defer easy.deinit();
 
-    var writer = curl.ResizableResponseWriter.init(allocator);
+    var writer = std.Io.Writer.Allocating.init(allocator);
     defer writer.deinit();
     const resp = try easy.fetch("https://httpbin.org/anything", .{
-        .response_writer = writer.asAny(),
+        .writer = &writer.writer,
     });
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        writer.asSlice(),
+        writer.writer.buffered(),
     });
 }

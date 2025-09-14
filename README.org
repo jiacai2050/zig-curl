@@ -1,10 +1,10 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2025-08-24T10:24:23+0800
+#+LASTMOD: 2025-09-14T21:23:40+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
-[[https://img.shields.io/badge/zig%20version-0.15.0-blue.svg]]
+[[https://img.shields.io/badge/zig%20version-0.15.1-blue.svg]]
 [[https://img.shields.io/badge/zig%20version-master-blue.svg]]
 [[https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml][https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml/badge.svg]]
 [[https://ci.codeberg.org/repos/13257][https://ci.codeberg.org/api/badges/13257/status.svg]]
@@ -18,7 +18,7 @@ The vendored libraries consist of:
 | zlib    | [[https://github.com/madler/zlib/tree/v1.3.1][1.3.1]]   |
 | mbedtls | [[https://github.com/Mbed-TLS/mbedtls/tree/v3.6.0][3.6.0]]   |
 
-* Usage
+- Usage
 #+begin_src bash :results verbatim :exports results :wrap src zig
 cat examples/hello.zig
 #+end_src
@@ -40,15 +40,15 @@ pub fn main() !void {
     });
     defer easy.deinit();
 
-    var writer = curl.ResizableResponseWriter.init(allocator);
+    var writer = std.Io.Writer.Allocating.init(allocator);
     defer writer.deinit();
     const resp = try easy.fetch("https://httpbin.org/anything", .{
-        .response_writer = writer.asAny(),
+        .writer = &writer.writer,
     });
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
-        writer.asSlice(),
+        writer.writer.buffered(),
     });
 }
 #+end_src

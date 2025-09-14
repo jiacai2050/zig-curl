@@ -7,12 +7,12 @@ const Easy = curl.Easy;
 const Multi = curl.Multi;
 const c = curl.libcurl;
 const checkCode = curl.checkCode;
-const AnyWriter = std.io.AnyWriter;
+const Writer = std.io.Writer;
 
-fn newEasy(writer: *curl.ResizableResponseWriter, any_writer: *const AnyWriter, url: [:0]const u8) !Easy {
+fn newEasy(writer: *Writer, url: [:0]const u8) !Easy {
     const easy = try Easy.init(.{});
     try easy.setUrl(url);
-    try easy.setAnyWriter(any_writer);
+    try easy.setWriter(writer);
     // CURLOPT_PRIVATE allows us to store a pointer to the ctx in the easy handle
     // so we can retrieve it later in the callback.
     try easy.setPrivate(writer);
@@ -28,15 +28,13 @@ pub fn main() !void {
     const multi = try Multi.init();
     defer multi.deinit();
 
-    var wtr1 = curl.ResizableResponseWriter.init(allocator);
+    var wtr1 = std.Io.Writer.Allocating.init(allocator);
     defer wtr1.deinit();
-    const any_writer1: AnyWriter = wtr1.asAny();
-    var wtr2 = curl.ResizableResponseWriter.init(allocator);
+    var wtr2 = std.Io.Writer.Allocating.init(allocator);
     defer wtr2.deinit();
-    const any_writer2: AnyWriter = wtr2.asAny();
 
-    try multi.addHandle(try newEasy(&wtr1, &any_writer1, "http://httpbin.org/headers"));
-    try multi.addHandle(try newEasy(&wtr2, &any_writer2, "http://httpbin.org/ip"));
+    try multi.addHandle(try newEasy(&wtr1.writer, "http://httpbin.org/headers"));
+    try multi.addHandle(try newEasy(&wtr2.writer, "http://httpbin.org/ip"));
 
     var keep_running = true;
     while (keep_running) {
@@ -72,8 +70,8 @@ pub fn main() !void {
         // Get the private data (buffer) associated with this handle
         var private_data: ?*anyopaque = null;
         try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_PRIVATE, &private_data));
-        const writer: *curl.ResizableResponseWriter = @ptrCast(@alignCast(private_data.?));
+        const writer: *Writer = @ptrCast(@alignCast(private_data.?));
 
-        std.debug.print("Response body: {s}\n", .{writer.asSlice()});
+        std.debug.print("Response body: {s}\n", .{writer.buffered()});
     }
 }

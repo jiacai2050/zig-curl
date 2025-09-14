@@ -6,7 +6,7 @@ const c = util.c;
 
 const mem = std.mem;
 const fmt = std.fmt;
-const AnyWriter = std.io.AnyWriter;
+const Writer = std.Io.Writer;
 const Allocator = mem.Allocator;
 const checkCode = errors.checkCode;
 const ResizableBuffer = types.ResizableBuffer;
@@ -54,7 +54,8 @@ pub const FetchOptions = struct {
     method: Method = .GET,
     body: ?[]const u8 = null,
     headers: ?[]const [:0]const u8 = null,
-    response_writer: ?AnyWriter = null,
+    /// If the server sends a body, it will be written here.
+    writer: ?*Writer = null,
 };
 
 pub const Response = struct {
@@ -345,7 +346,7 @@ pub fn setPrivate(self: Self, data: *const anyopaque) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PRIVATE, data));
 }
 
-pub fn setWritedata(self: Self, data: *const anyopaque) !void {
+pub fn setWritedata(self: Self, data: *anyopaque) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEDATA, data));
 }
 
@@ -363,21 +364,21 @@ pub fn setWritefunction(
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, func));
 }
 
-/// Set `WRITEDATA` to AnyWriter and `WRITEFUNCTION` to a function that calls with the writer.
-pub fn setAnyWriter(
+/// Set `WRITEDATA` to `Writer` and `WRITEFUNCTION` to a function that calls with the writer.
+pub fn setWriter(
     self: Self,
-    any_writer: *const AnyWriter,
+    writer: *Writer,
 ) !void {
-    try self.setWritedata(any_writer);
+    try self.setWritedata(writer);
     try self.setWritefunction(struct {
         fn write(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
             const real_size = size * nmemb;
             const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];
-            const writer: *const AnyWriter = @ptrCast(@alignCast(user_data));
-            const ret = writer.write(data) catch {
+            const writer_inner: *Writer = @ptrCast(@alignCast(user_data));
+            writer_inner.writeAll(data) catch {
                 return 0; // Indicate an error
             };
-            return @intCast(ret);
+            return @intCast(real_size);
         }
     }.write);
 }
@@ -440,11 +441,6 @@ pub fn head(self: Self, url: [:0]const u8) !Response {
 }
 
 /// Fetch issues a request to the specified URL.
-///
-/// `writeContext` is used to write the response body. There are two built-in write contexts:
-/// 1. `ResizableWriteContext` - a resizable context that grows as needed to hold the response body.
-/// 2. `FixedWriteContext` - a fixed-size one that must be large enough to hold the response body.
-/// Or it can be `void`, which means you don't care about the response body.
 pub fn fetch(
     self: Self,
     url: [:0]const u8,
@@ -468,8 +464,8 @@ pub fn fetch(
         h.deinit();
     };
 
-    if (options.response_writer) |writer| {
-        try self.setAnyWriter(&writer);
+    if (options.writer) |writer| {
+        try self.setWriter(writer);
     }
 
     return try self.perform();
@@ -477,13 +473,13 @@ pub fn fetch(
 
 /// Upload issues a PUT request to upload file.
 /// `writeContext` is the same as in `fetch`, used to write the response body.
-pub fn upload(self: Self, url: [:0]const u8, path: []const u8, any_writer: AnyWriter) !Response {
+pub fn upload(self: Self, url: [:0]const u8, path: []const u8, writer: *Writer) !Response {
     var up = try Upload.init(path);
     defer up.deinit();
     try self.setUpload(&up);
 
     try self.setUrl(url);
-    try self.setAnyWriter(&any_writer);
+    try self.setWriter(writer);
     return try self.perform();
 }
 

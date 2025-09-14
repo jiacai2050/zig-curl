@@ -8,7 +8,6 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
             .target = target,
             .optimize = optimize,
             .link_libc = true,
-            .root_source_file = null,
         }),
     });
     const curl_dep = b.lazyDependency("curl", .{

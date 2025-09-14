@@ -1,3 +1,0 @@
-libs/curl/** linguist-vendored
-libs/mbedtls/** linguist-vendored
-libs/zlib/** linguist-vendored
