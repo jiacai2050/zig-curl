@@ -65,7 +65,7 @@ The latest tag can be found on [[https://github.com/jiacai2050/zig-curl/releases
 
 After fetch, import =curl= like this in your =build.zig=:
 #+begin_src zig
-const dep_curl = b.dependency("curl", .{});
+const dep_curl = b.dependency("curl", .{ .sanitize_c = std.zig.SanitizeC.off });
 exe.root_module.addImport("curl", dep_curl.module("curl"));
 exe.linkLibC();
 #+end_src

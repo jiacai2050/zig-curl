@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) ?*std.Build.Step.Compile {
+pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sanitize_c: ?std.zig.SanitizeC) ?*std.Build.Step.Compile {
     const lib = b.addLibrary(.{
         .linkage = .static,
         .name = "z",
@@ -8,6 +8,7 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
             .target = target,
             .optimize = optimize,
             .link_libc = true,
+            .sanitize_c = sanitize_c,
         }),
     });
     const zlib_dep = b.lazyDependency("zlib", .{

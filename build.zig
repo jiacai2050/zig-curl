@@ -10,6 +10,7 @@ pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const link_vendor = b.option(bool, "link_vendor", "Whether link to vendored libcurl (default: true)") orelse true;
+    const sanitize_c: ?std.zig.SanitizeC = b.option(std.zig.SanitizeC, "sanitize_c", "Enable compiler sanitizers (default: null)") orelse null;
 
     const module = b.addModule(MODULE_NAME, .{
         .root_source_file = b.path("src/root.zig"),
@@ -26,7 +27,7 @@ pub fn build(b: *Build) !void {
 
     var libcurl: ?*Step.Compile = null;
     if (link_vendor) {
-        if (buildLibcurl(b, target, optimize)) |v| {
+        if (buildLibcurl(b, target, optimize, sanitize_c)) |v| {
             libcurl = v;
             module.linkLibrary(v);
         } else {
@@ -78,10 +79,11 @@ fn buildLibcurl(
     b: *Build,
     target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    sanitize_c: ?std.zig.SanitizeC,
 ) ?*Step.Compile {
-    const curl = @import("libs/curl.zig").create(b, target, optimize);
-    const tls = @import("libs/mbedtls.zig").create(b, target, optimize);
-    const zlib = @import("libs/zlib.zig").create(b, target, optimize);
+    const curl = @import("libs/curl.zig").create(b, target, optimize, sanitize_c);
+    const tls = @import("libs/mbedtls.zig").create(b, target, optimize, sanitize_c);
+    const zlib = @import("libs/zlib.zig").create(b, target, optimize, sanitize_c);
     if (curl == null or tls == null or zlib == null) {
         return null;
     }

@@ -1,7 +1,7 @@
 const std = @import("std");
 const ResolvedTarget = std.Build.ResolvedTarget;
 
-pub fn create(b: *std.Build, target: ResolvedTarget, optimize: std.builtin.OptimizeMode) ?*std.Build.Step.Compile {
+pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sanitize_c: ?std.zig.SanitizeC) ?*std.Build.Step.Compile {
     const lib = b.addLibrary(.{
         .linkage = .static,
         .name = "mbedtls",
@@ -9,6 +9,7 @@ pub fn create(b: *std.Build, target: ResolvedTarget, optimize: std.builtin.Optim
             .target = target,
             .optimize = optimize,
             .link_libc = true,
+            .sanitize_c = sanitize_c,
         }),
     });
 
