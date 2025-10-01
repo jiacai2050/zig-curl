@@ -20,6 +20,46 @@ timeout_ms: usize,
 user_agent: [:0]const u8,
 ca_bundle: ?ResizableBuffer,
 
+pub const HttpVersion = enum {
+    @"HTTP/1.0",
+    @"HTTP/1.1",
+    @"HTTP/2",
+    @"HTTP/2TLS",
+    @"HTTP/2_PRIOR_KNOWLEDGE",
+    @"HTTP/3",
+    @"HTTP/3_ONLY",
+    @"HTTP/LAST",
+
+    fn asCurlType(self: HttpVersion) c_int {
+        switch (self) {
+            .@"HTTP/1.0" => {
+                return c.CURL_HTTP_VERSION_1_0;
+            },
+            .@"HTTP/1.1" => {
+                return c.CURL_HTTP_VERSION_1_1;
+            },
+            .@"HTTP/2" => {
+                return c.CURL_HTTP_VERSION_2_0;
+            },
+            .@"HTTP/2TLS" => {
+                return c.CURL_HTTP_VERSION_2TLS;
+            },
+            .@"HTTP/2_PRIOR_KNOWLEDGE" => {
+                return c.CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE;
+            },
+            .@"HTTP/3" => {
+                return c.CURL_HTTP_VERSION_3;
+            },
+            .@"HTTP/3_ONLY" => {
+                return c.CURL_HTTP_VERSION_3ONLY;
+            },
+            .@"HTTP/LAST" => {
+                return c.CURL_HTTP_VERSION_LAST;
+            },
+        }
+    }
+};
+
 pub const Method = enum {
     GET,
     POST,
@@ -317,6 +357,13 @@ pub fn setUpload(self: Self, up: *Upload) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_UPLOAD, @as(c_int, 1)));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_READFUNCTION, Upload.readFunction));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_READDATA, up));
+}
+
+pub fn setHttpVersion(self: Self, version: HttpVersion) !void {
+    try checkCode(c.curl_easy_setopt(
+        self.handle,
+        version.asCurlType(),
+    ));
 }
 
 pub fn setFollowLocation(self: Self, enable: bool) !void {
