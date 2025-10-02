@@ -20,6 +20,17 @@ timeout_ms: usize,
 user_agent: [:0]const u8,
 ca_bundle: ?ResizableBuffer,
 
+pub const HttpVersion = enum(c_long) {
+    none = c.CURL_HTTP_VERSION_NONE,
+    http1_0 = c.CURL_HTTP_VERSION_1_0,
+    http1_1 = c.CURL_HTTP_VERSION_1_1,
+    http2 = c.CURL_HTTP_VERSION_2_0,
+    http2_tls = c.CURL_HTTP_VERSION_2TLS,
+    http2_prior_knowledge = c.CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE,
+    http3 = c.CURL_HTTP_VERSION_3,
+    http3_only = c.CURL_HTTP_VERSION_3ONLY,
+};
+
 pub const Method = enum {
     GET,
     POST,
@@ -317,6 +328,14 @@ pub fn setUpload(self: Self, up: *Upload) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_UPLOAD, @as(c_int, 1)));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_READFUNCTION, Upload.readFunction));
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_READDATA, up));
+}
+
+pub fn setHttpVersion(self: Self, version: HttpVersion) !void {
+    try checkCode(c.curl_easy_setopt(
+        self.handle,
+        c.CURLOPT_HTTP_VERSION,
+        @intFromEnum(version),
+    ));
 }
 
 pub fn setFollowLocation(self: Self, enable: bool) !void {
