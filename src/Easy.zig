@@ -362,6 +362,7 @@ pub fn setUpload(self: Self, up: *Upload) !void {
 pub fn setHttpVersion(self: Self, version: HttpVersion) !void {
     try checkCode(c.curl_easy_setopt(
         self.handle,
+        c.CURLOPT_HTTP_VERSION,
         version.asCurlType(),
     ));
 }
