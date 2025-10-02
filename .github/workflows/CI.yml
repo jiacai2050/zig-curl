@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  schedule:
-    - cron: '10 20 * * *'
   workflow_dispatch:
   pull_request:
     paths:
@@ -23,15 +21,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        zig-version: [0.15.1]
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ matrix.zig-version }}
-      - uses: actions/setup-go@v5
-        with:
-          go-version: 'stable'
       - name: Run tests
         run: |
           make test
@@ -61,12 +53,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        zig-version: [0.15.1]
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ matrix.zig-version }}
       - name: Set Environment Variables
         run: |
           echo "ZIG_ARGS='-Dlink_vendor=false'" >> $GITHUB_ENV

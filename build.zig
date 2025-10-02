@@ -11,7 +11,7 @@ pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const link_vendor = b.option(bool, "link_vendor", "Whether link to vendored libcurl (default: true)") orelse true;
-    const sanitize_c: ?SanitizeC = b.option(SanitizeC, "sanitize_c", "Enable compiler sanitizers (default: null)") orelse null;
+    const sanitize_c = b.option(SanitizeC, "sanitize_c", "Enable compiler sanitizers (default: null)");
 
     const module = b.addModule(MODULE_NAME, .{
         .root_source_file = b.path("src/root.zig"),

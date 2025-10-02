@@ -2,8 +2,9 @@
 ARGS = ${ZIG_ARGS}
 
 run:
-	zig build run-hello -freference-trace $(ARGS)
 	zig build run-basic -freference-trace $(ARGS)
+	zig build run-post -freference-trace $(ARGS)
+	zig build run-upload -freference-trace $(ARGS)
 	zig build run-advanced -freference-trace $(ARGS)
 	zig build run-multi -freference-trace $(ARGS)
 	zig build run-header -freference-trace $(ARGS)
