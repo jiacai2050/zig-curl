@@ -20,7 +20,7 @@ timeout_ms: usize,
 user_agent: [:0]const u8,
 ca_bundle: ?ResizableBuffer,
 
-pub const HttpVersion = enum(c_int) {
+pub const HttpVersion = enum(c_long) {
     http1_0 = c.CURL_HTTP_VERSION_1_0,
     http1_1 = c.CURL_HTTP_VERSION_1_1,
     http2 = c.CURL_HTTP_VERSION_2_0,
