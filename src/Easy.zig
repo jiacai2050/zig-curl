@@ -21,13 +21,13 @@ user_agent: [:0]const u8,
 ca_bundle: ?ResizableBuffer,
 
 pub const HttpVersion = enum(c_int) {
-    @"HTTP/1.0" = c.CURL_HTTP_VERSION_1_0,
-    @"HTTP/1.1" = c.CURL_HTTP_VERSION_1_1,
-    @"HTTP/2" = c.CURL_HTTP_VERSION_2_0,
-    @"HTTP/2_TLS" = c.CURL_HTTP_VERSION_2TLS,
-    @"HTTP/2_PRIOR_KNOWLEDGE" = c.CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE,
-    @"HTTP/3" = c.CURL_HTTP_VERSION_3,
-    @"HTTP/3_ONLY" = c.CURL_HTTP_VERSION_3ONLY,
+    http1_0 = c.CURL_HTTP_VERSION_1_0,
+    http1_1 = c.CURL_HTTP_VERSION_1_1,
+    http2 = c.CURL_HTTP_VERSION_2_0,
+    http2_tls = c.CURL_HTTP_VERSION_2TLS,
+    http2_prior_knowledge = c.CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE,
+    http3 = c.CURL_HTTP_VERSION_3,
+    http3_only = c.CURL_HTTP_VERSION_3ONLY,
     last = c.CURL_HTTP_VERSION_LAST,
 };
 
