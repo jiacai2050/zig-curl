@@ -28,7 +28,6 @@ pub const HttpVersion = enum(c_int) {
     http2_prior_knowledge = c.CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE,
     http3 = c.CURL_HTTP_VERSION_3,
     http3_only = c.CURL_HTTP_VERSION_3ONLY,
-    last = c.CURL_HTTP_VERSION_LAST,
 };
 
 pub const Method = enum {
