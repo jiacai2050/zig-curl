@@ -21,7 +21,7 @@ fn newEasy(writer: *Writer, url: [:0]const u8) !Easy {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 

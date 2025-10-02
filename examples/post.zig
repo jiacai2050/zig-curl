@@ -2,7 +2,7 @@ const std = @import("std");
 const curl = @import("curl");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
@@ -13,11 +13,23 @@ pub fn main() !void {
     });
     defer easy.deinit();
 
+    const payload =
+        \\{"name": "John", "age": 15}
+    ;
+
     var writer = std.Io.Writer.Allocating.init(allocator);
     defer writer.deinit();
-    const resp = try easy.fetch("https://httpbin.org/anything", .{
-        .writer = &writer.writer,
-    });
+    const resp = try easy.fetch(
+        "https://httpbin.org/anything",
+        .{
+            .method = .POST,
+            .body = payload,
+            .headers = &.{
+                "Content-Type: application/json",
+            },
+            .writer = &writer.writer,
+        },
+    );
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
         resp.status_code,
