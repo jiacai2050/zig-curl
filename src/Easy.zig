@@ -7,6 +7,7 @@ const c = util.c;
 const mem = std.mem;
 const fmt = std.fmt;
 const Writer = std.Io.Writer;
+const Reader = std.Io.Reader;
 const Allocator = mem.Allocator;
 const checkCode = errors.checkCode;
 const ResizableBuffer = types.ResizableBuffer;
@@ -239,24 +240,17 @@ pub const MultiPart = struct {
 };
 
 pub const Upload = struct {
-    file: std.fs.File,
-    file_len: u64,
+    reader: *Reader,
 
-    pub fn init(path: []const u8) !Upload {
-        const file = try std.fs.cwd().openFile(path, .{});
-        const stat = try file.stat();
-        return .{ .file = file, .file_len = stat.size };
-    }
-
-    pub fn deinit(self: Upload) void {
-        self.file.close();
+    pub fn init(reader: *Reader) !Upload {
+        return .{ .reader = reader };
     }
 
     pub fn readFunction(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
         const up: *Upload = @ptrCast(@alignCast(user_data));
-        const max_length = @min(size * nmemb, up.file_len);
+        const max_length: usize = @intCast(size * nmemb);
         var buf: [*]u8 = @ptrCast(ptr);
-        const n = up.file.read(buf[0..max_length]) catch |e| {
+        const n = up.reader.readSliceShort(buf[0..max_length]) catch |e| {
             std.log.err("Upload read file failed, err:{any}\n", .{e});
             return c.CURL_READFUNC_ABORT;
         };
@@ -330,6 +324,11 @@ pub fn setUpload(self: Self, up: *Upload) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_READDATA, up));
 }
 
+/// Ask libcurl to use the specific HTTP versions.
+/// Note that the HTTP version is just a request. libcurl still prioritizes to reuse existing connections
+/// so it might then reuse a connection using an HTTP version you have not asked for.
+///
+/// https://curl.se/libcurl/c/CURLOPT_HTTP_VERSION.html
 pub fn setHttpVersion(self: Self, version: HttpVersion) !void {
     try checkCode(c.curl_easy_setopt(
         self.handle,
@@ -485,6 +484,9 @@ pub fn fetch(
 
     if (options.writer) |writer| {
         try self.setWriter(writer);
+        const resp = try self.perform();
+        try writer.flush();
+        return resp;
     }
 
     return try self.perform();
@@ -492,14 +494,15 @@ pub fn fetch(
 
 /// Upload issues a PUT request to upload file.
 /// `writeContext` is the same as in `fetch`, used to write the response body.
-pub fn upload(self: Self, url: [:0]const u8, path: []const u8, writer: *Writer) !Response {
-    var up = try Upload.init(path);
-    defer up.deinit();
+pub fn upload(self: Self, url: [:0]const u8, reader: *Reader, writer: *Writer) !Response {
+    var up = try Upload.init(reader);
     try self.setUpload(&up);
 
     try self.setUrl(url);
     try self.setWriter(writer);
-    return try self.perform();
+    const resp = try self.perform();
+    try writer.flush();
+    return resp;
 }
 
 /// A write callback that does nothing, used when you don't care about the response body.
@@ -512,10 +515,11 @@ pub fn discardWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_d
 /// A write callback that writes the response body to stdout.
 pub fn stdoutWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
     _ = user_data;
-    const stdout = std.io.getStdOut().writer();
+    const stdout = std.fs.File.stdout();
+    var writer = stdout.writer(&.{}); // empty buffer means unbuffered
     const real_size = size * nmemb;
     const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];
-    stdout.writeAll(data) catch {
+    writer.writeAll(data) catch {
         return 0;
     };
     return real_size;
