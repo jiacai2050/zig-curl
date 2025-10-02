@@ -20,44 +20,15 @@ timeout_ms: usize,
 user_agent: [:0]const u8,
 ca_bundle: ?ResizableBuffer,
 
-pub const HttpVersion = enum {
-    @"HTTP/1.0",
-    @"HTTP/1.1",
-    @"HTTP/2",
-    @"HTTP/2TLS",
-    @"HTTP/2_PRIOR_KNOWLEDGE",
-    @"HTTP/3",
-    @"HTTP/3_ONLY",
-    @"HTTP/LAST",
-
-    fn asCurlType(self: HttpVersion) c_int {
-        switch (self) {
-            .@"HTTP/1.0" => {
-                return c.CURL_HTTP_VERSION_1_0;
-            },
-            .@"HTTP/1.1" => {
-                return c.CURL_HTTP_VERSION_1_1;
-            },
-            .@"HTTP/2" => {
-                return c.CURL_HTTP_VERSION_2_0;
-            },
-            .@"HTTP/2TLS" => {
-                return c.CURL_HTTP_VERSION_2TLS;
-            },
-            .@"HTTP/2_PRIOR_KNOWLEDGE" => {
-                return c.CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE;
-            },
-            .@"HTTP/3" => {
-                return c.CURL_HTTP_VERSION_3;
-            },
-            .@"HTTP/3_ONLY" => {
-                return c.CURL_HTTP_VERSION_3ONLY;
-            },
-            .@"HTTP/LAST" => {
-                return c.CURL_HTTP_VERSION_LAST;
-            },
-        }
-    }
+pub const HttpVersion = enum(c_int) {
+    @"HTTP/1.0" = c.CURL_HTTP_VERSION_1_0,
+    @"HTTP/1.1" = c.CURL_HTTP_VERSION_1_1,
+    @"HTTP/2" = c.CURL_HTTP_VERSION_2_0,
+    @"HTTP/2_TLS" = c.CURL_HTTP_VERSION_2TLS,
+    @"HTTP/2_PRIOR_KNOWLEDGE" = c.CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE,
+    @"HTTP/3" = c.CURL_HTTP_VERSION_3,
+    @"HTTP/3_ONLY" = c.CURL_HTTP_VERSION_3ONLY,
+    last = c.CURL_HTTP_VERSION_LAST,
 };
 
 pub const Method = enum {
@@ -363,7 +334,7 @@ pub fn setHttpVersion(self: Self, version: HttpVersion) !void {
     try checkCode(c.curl_easy_setopt(
         self.handle,
         c.CURLOPT_HTTP_VERSION,
-        version.asCurlType(),
+        version,
     ));
 }
 
