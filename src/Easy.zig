@@ -213,9 +213,8 @@ pub const Upload = struct {
         return .{ .reader = reader };
     }
 
-    pub fn readFunction(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data_ptr: ?*anyopaque) callconv(.c) c_uint {
-        const user_data = user_data_ptr orelse return c.CURL_READFUNC_ABORT;
-        const up: *Upload = @ptrCast(@alignCast(user_data));
+    pub fn readFunction(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: ?*anyopaque) callconv(.c) c_uint {
+        const up: *Upload = @ptrCast(@alignCast(user_data orelse return c.CURL_READFUNC_ABORT));
         const max_length: usize = @intCast(size * nmemb);
         var buf: [*]u8 = @ptrCast(ptr);
         const n = up.reader.readSliceShort(buf[0..max_length]) catch |e| {
