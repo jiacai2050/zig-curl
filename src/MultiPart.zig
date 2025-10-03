@@ -16,12 +16,6 @@ pub const NonCopyingData = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
 
-    // pub const VTable = struct {
-    //     read: *const fn (*anyopaque, buf: []u8) usize,
-    //     seek: ?*const fn (*anyopaque, usize) void,
-    //     free: ?*const fn (*anyopaque) void,
-    // };
-
     const VTable = struct {
         // ?*const fn ([*c]u8, usize, usize, ?*anyopaque) callconv(.c) usize;
         read: c.curl_read_callback,
@@ -77,15 +71,19 @@ pub const NonCopyingData = struct {
 
         pub fn seek(user_data: ?*anyopaque, offset: c_long, origin: c_int) callconv(.c) c_int {
             var source: *DataWithOffset = @ptrCast(@alignCast(user_data));
-            const new_pos: usize = switch (origin) {
-                c.SEEK_SET => @intCast(offset),
-                c.SEEK_CUR => @as(usize, @intCast(offset)) + source.offset,
+            const new_pos = switch (origin) {
+                c.SEEK_SET => offset,
+                c.SEEK_CUR => offset + @as(c_long, @intCast(source.offset)),
                 else => return c.CURL_SEEKFUNC_FAIL,
             };
-            if (new_pos < 0 or new_pos > source.slice.len) {
+            if (new_pos < 0) {
                 return c.CURL_SEEKFUNC_FAIL;
             }
-            source.offset = new_pos;
+            const new_offset = @as(usize, @intCast(new_pos));
+            if (new_offset > source.slice.len) {
+                return c.CURL_SEEKFUNC_FAIL;
+            }
+            source.offset = new_offset;
             return c.CURL_SEEKFUNC_OK;
         }
     };
