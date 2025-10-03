@@ -1,10 +1,10 @@
 const std = @import("std");
 const util = @import("util.zig");
-const types = @import("types.zig");
 pub const checkCode = @import("errors.zig").checkCode;
 
 pub const Easy = @import("Easy.zig");
 pub const Multi = @import("Multi.zig");
+pub const MultiPart = @import("MultiPart.zig");
 
 pub const printLibcurlVersion = util.printLibcurlVersion;
 pub const hasParseHeaderSupport = util.hasParseHeaderSupport;
