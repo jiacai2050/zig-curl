@@ -1,8 +1,7 @@
 const std = @import("std");
 const errors = @import("errors.zig");
 const util = @import("util.zig");
-const types = @import("types.zig");
-const c = util.c;
+const MultiPart = @import("MultiPart.zig");
 
 const mem = std.mem;
 const fmt = std.fmt;
@@ -10,7 +9,8 @@ const Writer = std.Io.Writer;
 const Reader = std.Io.Reader;
 const Allocator = mem.Allocator;
 const checkCode = errors.checkCode;
-const ResizableBuffer = types.ResizableBuffer;
+const c = util.c;
+const ResizableBuffer = util.ResizableBuffer;
 
 const hasParseHeaderSupport = @import("util.zig").hasParseHeaderSupport;
 
@@ -206,39 +206,6 @@ pub const Response = struct {
     }
 };
 
-pub const MultiPart = struct {
-    mime_handle: *c.curl_mime,
-
-    pub const DataSource = union(enum) {
-        /// Set a mime part's body content from memory data.
-        /// Data will get copied when send request.
-        /// Setting large data is memory consuming: one might consider using `data_callback` in such a case.
-        data: []const u8,
-        /// Set a mime part's body data from a file contents.
-        file: [:0]const u8,
-        // TODO: https://curl.se/libcurl/c/curl_mime_data_cb.html
-        // data_callback: u8,
-    };
-
-    pub fn deinit(self: MultiPart) void {
-        c.curl_mime_free(self.mime_handle);
-    }
-
-    pub fn addPart(self: MultiPart, name: [:0]const u8, source: DataSource) !void {
-        const part = if (c.curl_mime_addpart(self.mime_handle)) |part| part else return error.MimeAddPart;
-
-        try checkCode(c.curl_mime_name(part, name));
-        switch (source) {
-            .data => |slice| {
-                try checkCode(c.curl_mime_data(part, slice.ptr, slice.len));
-            },
-            .file => |filepath| {
-                try checkCode(c.curl_mime_filedata(part, filepath));
-            },
-        }
-    }
-};
-
 pub const Upload = struct {
     reader: *Reader,
 
@@ -246,8 +213,8 @@ pub const Upload = struct {
         return .{ .reader = reader };
     }
 
-    pub fn readFunction(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
-        const up: *Upload = @ptrCast(@alignCast(user_data));
+    pub fn readFunction(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: ?*anyopaque) callconv(.c) c_uint {
+        const up: *Upload = @ptrCast(@alignCast(user_data orelse return c.CURL_READFUNC_ABORT));
         const max_length: usize = @intCast(size * nmemb);
         var buf: [*]u8 = @ptrCast(ptr);
         const n = up.reader.readSliceShort(buf[0..max_length]) catch |e| {
@@ -287,10 +254,7 @@ pub fn deinit(self: Self) void {
 }
 
 pub fn createMultiPart(self: Self) !MultiPart {
-    return if (c.curl_mime_init(self.handle)) |h|
-        .{ .mime_handle = h }
-    else
-        error.MimeInit;
+    return MultiPart.init(self);
 }
 
 pub fn setUrl(self: Self, url: [:0]const u8) !void {
@@ -389,10 +353,10 @@ pub fn setWriter(
 ) !void {
     try self.setWritedata(writer);
     try self.setWritefunction(struct {
-        fn write(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
+        fn write(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: ?*anyopaque) callconv(.c) c_uint {
             const real_size = size * nmemb;
             const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];
-            const writer_inner: *Writer = @ptrCast(@alignCast(user_data));
+            const writer_inner: *Writer = @ptrCast(@alignCast(user_data orelse return 0));
             writer_inner.writeAll(data) catch {
                 return 0; // Indicate an error
             };

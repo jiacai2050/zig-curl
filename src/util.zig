@@ -4,7 +4,7 @@ pub const c = @cImport({
 });
 const Allocator = std.mem.Allocator;
 const Encoder = std.base64.standard.Encoder;
-const ResizableBuffer = @import("types.zig").ResizableBuffer;
+pub const ResizableBuffer = std.array_list.Managed(u8);
 
 pub fn encode_base64(allocator: Allocator, input: []const u8) ![]const u8 {
     const encoded_len = Encoder.calcSize(input.len);
