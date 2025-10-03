@@ -58,7 +58,7 @@ pub const NonCopyingData = struct {
         }
 
         fn read(dest: [*c]u8, size: usize, nmemb: usize, user_data: ?*anyopaque) callconv(.c) usize {
-            var source: *DataWithOffset = @ptrCast(@alignCast(user_data));
+            var source: *DataWithOffset = @ptrCast(@alignCast(user_data orelse return c.CURL_READFUNC_ABORT));
             var to_read = size * nmemb;
             const remaining = source.slice.len - source.offset;
             if (to_read > remaining) {
@@ -71,7 +71,7 @@ pub const NonCopyingData = struct {
         }
 
         pub fn seek(user_data: ?*anyopaque, offset: c_long, origin: c_int) callconv(.c) c_int {
-            var source: *DataWithOffset = @ptrCast(@alignCast(user_data));
+            var source: *DataWithOffset = @ptrCast(@alignCast(user_data orelse return c.CURL_READFUNC_ABORT));
             const new_pos = switch (origin) {
                 c.SEEK_SET => offset,
                 c.SEEK_CUR => offset + @as(c_long, @intCast(source.offset)),
@@ -116,7 +116,7 @@ pub const NonCopyingData = struct {
         }
 
         fn read(dest: [*c]u8, size: usize, nmemb: usize, user_data: ?*anyopaque) callconv(.c) usize {
-            var source: *Reader = @ptrCast(@alignCast(user_data));
+            var source: *Reader = @ptrCast(@alignCast(user_data orelse return c.CURL_READFUNC_ABORT));
             const to_read = size * nmemb;
             const n = source.readSliceShort(dest[0..to_read]) catch return c.CURL_READFUNC_ABORT;
             return n;
