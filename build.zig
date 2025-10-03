@@ -59,6 +59,18 @@ pub fn build(b: *Build) !void {
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&run_main_tests.step);
 
+    const doc_obj = b.addObject(.{
+        .name = "docs",
+        .root_module = module,
+    });
+    const install_docs = b.addInstallDirectory(.{
+        .source_dir = doc_obj.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    });
+    const docs_step = b.step("docs", "Generate documentation");
+    docs_step.dependOn(&install_docs.step);
+
     const check_step = b.step("check", "Used for checking the library");
     inline for (.{ "basic", "advanced", "multi" }) |name| {
         const check_exe = b.addExecutable(.{

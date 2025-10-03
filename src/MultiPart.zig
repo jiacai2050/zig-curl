@@ -8,6 +8,7 @@ const Reader = std.Io.Reader;
 mime_handle: *c.curl_mime,
 
 /// `NonCopyingData` allows setting a mime part's body data from a custom source without copying the data.
+///
 /// Modelled after [curl_mime_data_cb](https://curl.se/libcurl/c/curl_mime_data_cb.html).
 /// There are two built-in implementations: `SliceBased` and `ReaderBased`.
 /// One can also implement their own source by providing a `VTable`.

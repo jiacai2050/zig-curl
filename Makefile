@@ -1,6 +1,12 @@
 
 ARGS = ${ZIG_ARGS}
 
+ifeq ($(shell uname), Linux)
+	SED_ARGS = -i
+else # macOS, BSD, etc.
+	SED_ARGS = -i ''
+endif
+
 run:
 	zig build run-basic -freference-trace $(ARGS)
 	zig build run-post -freference-trace $(ARGS)
@@ -16,8 +22,8 @@ test: lint
 	zig build test $(ARGS)
 
 docs:
-	if [ ! -d zig-out ]; then mkdir zig-out; fi
-	zig build-lib --dep build_info -Mbuild_info=src/root.zig -femit-docs=zig-out/docs -fno-emit-bin
+	zig build docs
+	sed $(SED_ARGS) 's|<style type="text/css">|<style type="text/css">\n  img { width: 200px; margin: auto;display: block; }\n|' zig-out/docs/index.html
 
 clean:
 	rm -rf zig-cache zig-out

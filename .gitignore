@@ -16,7 +16,6 @@ docgen_tmp/
 .vagrant
 Vagrantfile
 zig-linux*
-docs
 libroot*
 .DS_Store
 *.o

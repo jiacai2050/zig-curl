@@ -1,15 +1,25 @@
+//! ![zig curl logo](https://raw.githubusercontent.com/jiacai2050/zig-curl/main/docs/logo.svg)
+//!
+//! [Zig-curl](https://github.com/jiacai2050/zig-curl) is a Zig binding for libcurl, a free and easy-to-use client-side URL transfer library.
+//!
+//! It provides a safe and idiomatic Zig interface to perform HTTP requests, handle responses,
+//! and manage connections.
 const std = @import("std");
 const util = @import("util.zig");
 pub const checkCode = @import("errors.zig").checkCode;
 
+/// Easy module provides a simple interface for performing HTTP requests.
 pub const Easy = @import("Easy.zig");
+/// Multi module provides a more advanced interface for handling multiple simultaneous transfers.
 pub const Multi = @import("Multi.zig");
+/// MultiPart module provides support for multipart/form-data requests.
 pub const MultiPart = @import("MultiPart.zig");
 
 pub const printLibcurlVersion = util.printLibcurlVersion;
 pub const hasParseHeaderSupport = util.hasParseHeaderSupport;
 pub const urlEncode = util.urlEncode;
 pub const allocCABundle = util.allocCABundle;
+/// Expose the raw libcurl C bindings for advanced use cases.
 pub const libcurl = util.c;
 
 /// This function sets up the program environment that libcurl needs.
