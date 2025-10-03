@@ -353,10 +353,10 @@ pub fn setWriter(
 ) !void {
     try self.setWritedata(writer);
     try self.setWritefunction(struct {
-        fn write(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
+        fn write(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: ?*anyopaque) callconv(.c) c_uint {
             const real_size = size * nmemb;
             const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];
-            const writer_inner: *Writer = @ptrCast(@alignCast(user_data));
+            const writer_inner: *Writer = @ptrCast(@alignCast(user_data orelse return 0));
             writer_inner.writeAll(data) catch {
                 return 0; // Indicate an error
             };
