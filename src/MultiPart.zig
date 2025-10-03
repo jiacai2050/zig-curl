@@ -60,8 +60,9 @@ pub const NonCopyingData = struct {
         fn read(dest: [*c]u8, size: usize, nmemb: usize, user_data: ?*anyopaque) callconv(.c) usize {
             var source: *DataWithOffset = @ptrCast(@alignCast(user_data));
             var to_read = size * nmemb;
-            if (to_read + source.offset >= source.slice.len) {
-                to_read = source.slice.len;
+            const remaining = source.slice.len - source.offset;
+            if (to_read > remaining) {
+                to_read = remaining;
             }
 
             std.mem.copyForwards(u8, dest[0..to_read], source.slice[source.offset .. source.offset + to_read]);
