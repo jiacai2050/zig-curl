@@ -1,3 +1,10 @@
+//! `Multi` provides a more advanced interface for handling multiple simultaneous transfers.
+//!
+//! It allows you to perform multiple transfers in parallel, manage connections, and handle events efficiently.
+//!
+//! This is particularly useful for applications that need to handle many requests at once, such as web crawlers or download managers.
+//!
+//! More see: https://curl.se/libcurl/c/libcurl-multi.html
 const std = @import("std");
 const errors = @import("errors.zig");
 const util = @import("util.zig");

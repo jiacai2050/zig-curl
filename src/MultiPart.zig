@@ -1,3 +1,9 @@
+//! MultiPart module provides support for multipart/form-data requests.
+//!
+//! It allows you to create and manage multipart form data, which is commonly used for file uploads and form submissions in HTTP requests.
+//!
+//! More see: https://curl.se/libcurl/c/curl_mime_init.html
+
 const std = @import("std");
 const util = @import("util.zig");
 const Easy = @import("Easy.zig");

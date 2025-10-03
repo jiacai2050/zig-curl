@@ -1,3 +1,5 @@
+//! `Easy` provides a simple interface for performing HTTP requests.
+//! It is a thin wrapper around libcurl's [easy](https://curl.se/libcurl/c/libcurl-easy.html) interface.
 const std = @import("std");
 const errors = @import("errors.zig");
 const util = @import("util.zig");

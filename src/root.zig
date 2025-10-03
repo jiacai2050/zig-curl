@@ -8,11 +8,8 @@ const std = @import("std");
 const util = @import("util.zig");
 pub const checkCode = @import("errors.zig").checkCode;
 
-/// Easy module provides a simple interface for performing HTTP requests.
 pub const Easy = @import("Easy.zig");
-/// Multi module provides a more advanced interface for handling multiple simultaneous transfers.
 pub const Multi = @import("Multi.zig");
-/// MultiPart module provides support for multipart/form-data requests.
 pub const MultiPart = @import("MultiPart.zig");
 
 pub const printLibcurlVersion = util.printLibcurlVersion;
