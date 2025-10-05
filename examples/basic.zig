@@ -1,6 +1,8 @@
 const std = @import("std");
 const curl = @import("curl");
 
+const URL = "https://httpbin.liujiacai.net/anything";
+
 pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer if (gpa.deinit() != .ok) @panic("leak");
@@ -15,7 +17,7 @@ pub fn main() !void {
 
     {
         std.debug.print("GET without body\n", .{});
-        const resp = try easy.fetch("https://httpbin.org/anything", .{});
+        const resp = try easy.fetch(URL, .{});
         std.debug.print("Status code: {d}\n", .{resp.status_code});
     }
 
@@ -23,7 +25,7 @@ pub fn main() !void {
         std.debug.print("\nGET with fixed buffer as body\n", .{});
         var buffer: [1024]u8 = undefined;
         var writer = std.Io.Writer.fixed(&buffer);
-        const resp = try easy.fetch("https://httpbin.org/anything", .{ .writer = &writer });
+        const resp = try easy.fetch(URL, .{ .writer = &writer });
         std.debug.print("Status code: {d}\nBody: {s}\n", .{ resp.status_code, writer.buffered() });
     }
 }

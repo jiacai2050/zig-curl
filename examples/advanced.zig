@@ -9,8 +9,8 @@ const UA = "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115
 
 const Response = struct {
     headers: struct {
-        @"User-Agent": []const u8,
-        Authorization: []const u8,
+        @"user-agent": []const u8,
+        authorization: []const u8,
     },
     json: struct {
         name: []const u8,
@@ -35,7 +35,7 @@ fn putWithCustomHeader(allocator: Allocator, easy: Easy) !void {
     };
     defer headers.deinit();
 
-    try easy.setUrl("https://httpbin.org/anything/zig-curl");
+    try easy.setUrl("https://httpbin.liujiacai.net/anything/zig-curl");
     try easy.setHeaders(headers);
     try easy.setMethod(.PUT);
     try easy.setVerbose(true);
@@ -63,15 +63,15 @@ fn putWithCustomHeader(allocator: Allocator, easy: Easy) !void {
         parsed.value,
         Response{
             .headers = .{
-                .@"User-Agent" = UA,
-                .Authorization = "Basic YWxhZGRpbjpvcGVuc2VzYW1l",
+                .@"user-agent" = UA,
+                .authorization = "Basic YWxhZGRpbjpvcGVuc2VzYW1l",
             },
             .json = .{
                 .name = "John",
                 .age = 15,
             },
             .method = "PUT",
-            .url = "https://httpbin.org/anything/zig-curl",
+            .url = "https://httpbin.liujiacai.net/anything/zig-curl",
         },
     );
 
@@ -94,11 +94,10 @@ fn postMultiPart(allocator: Allocator, easy: Easy) !void {
     const multi_part = try easy.createMultiPart();
     try multi_part.addPart("foo", .{ .data = "hello foo" });
     try multi_part.addPart("bar", .{ .data = "hello bar" });
-    try multi_part.addPart("build.zig", .{ .file = "build.zig" });
-    try multi_part.addPart("readme", .{ .file = "README.org" });
+    try multi_part.addPart("readme", .{ .file = "examples/test.txt" });
     defer multi_part.deinit();
 
-    try easy.setUrl("https://httpbin.org/anything/mp");
+    try easy.setUrl("https://httpbin.liujiacai.net/anything/mp");
     try easy.setMethod(.PUT);
     try easy.setMultiPart(multi_part);
     try easy.setVerbose(true);

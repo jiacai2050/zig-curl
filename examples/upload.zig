@@ -3,7 +3,7 @@ const println = @import("util.zig").println;
 const curl = @import("curl");
 const Allocator = std.mem.Allocator;
 
-const URL = "http://localhost:8182/anything";
+const URL = "https://httpbin.liujiacai.net/anything";
 
 pub fn main() !void {
     println("Upload demo");
@@ -11,10 +11,14 @@ pub fn main() !void {
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const easy = try curl.Easy.init(.{});
+    const ca_bundle = try curl.allocCABundle(allocator);
+    defer ca_bundle.deinit();
+    const easy = try curl.Easy.init(.{
+        .ca_bundle = ca_bundle,
+    });
     defer easy.deinit();
 
-    const path = "LICENSE";
+    const path = "examples/test.txt";
     var writer = std.Io.Writer.Allocating.init(allocator);
     defer writer.deinit();
 
@@ -50,6 +54,12 @@ fn multipartUpload(allocator: Allocator, easy: curl.Easy) !void {
     var reader_data = curl.MultiPart.NonCopyingData.ReaderBased.init(reader.end, &reader);
     try multi_part.addPart("non-copying-data-2", .{
         .non_copying = reader_data.nonCopying(),
+    });
+    try multi_part.addPart("copying-data", .{
+        .data = "copying data",
+    });
+    try multi_part.addPart("file-data", .{
+        .file = "examples/test.txt",
     });
     var writer = std.Io.Writer.Allocating.init(allocator);
     defer writer.deinit();
