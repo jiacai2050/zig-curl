@@ -33,8 +33,8 @@ pub fn main() !void {
     var wtr2 = std.Io.Writer.Allocating.init(allocator);
     defer wtr2.deinit();
 
-    try multi.addHandle(try newEasy(&wtr1.writer, "http://httpbin.liujiacai.net/headers"));
-    try multi.addHandle(try newEasy(&wtr2.writer, "http://httpbin.liujiacai.net/ip"));
+    try multi.addHandle(try newEasy(&wtr1.writer, "http://edgebin.liujiacai.net/headers"));
+    try multi.addHandle(try newEasy(&wtr2.writer, "http://edgebin.liujiacai.net/ip"));
 
     var keep_running = true;
     while (keep_running) {

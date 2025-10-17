@@ -1,10 +1,10 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2025-10-05T21:21:30+0800
+#+LASTMOD: 2025-10-17T09:10:36+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
-[[https://img.shields.io/badge/zig%20version-0.15.1-blue.svg]]
+[[https://img.shields.io/badge/zig%20version-0.15.2-blue.svg]]
 [[https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml][https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml/badge.svg]]
 [[https://ci.codeberg.org/repos/13257][https://ci.codeberg.org/api/badges/13257/status.svg]]
 
@@ -29,7 +29,7 @@ cat examples/basic.zig
 const std = @import("std");
 const curl = @import("curl");
 
-const URL = "https://httpbin.liujiacai.net/anything";
+const URL = "https://edgebin.liujiacai.net/anything";
 
 pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;

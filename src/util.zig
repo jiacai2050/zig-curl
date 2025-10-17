@@ -79,8 +79,8 @@ test "url encode" {
             "https%3A%2F%2Fgithub.com%2F",
         },
         .{
-            "https://httpbin.org/anything/你好",
-            "https%3A%2F%2Fhttpbin.org%2Fanything%2F%E4%BD%A0%E5%A5%BD",
+            "https://edgebin.org/anything/你好",
+            "https%3A%2F%2Fedgebin.org%2Fanything%2F%E4%BD%A0%E5%A5%BD",
         },
     }) |case| {
         const input = case.@"0";

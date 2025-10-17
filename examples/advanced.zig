@@ -35,7 +35,7 @@ fn putWithCustomHeader(allocator: Allocator, easy: Easy) !void {
     };
     defer headers.deinit();
 
-    try easy.setUrl("https://httpbin.liujiacai.net/anything/zig-curl");
+    try easy.setUrl("https://edgebin.liujiacai.net/anything/zig-curl");
     try easy.setHeaders(headers);
     try easy.setMethod(.PUT);
     try easy.setVerbose(true);
@@ -71,7 +71,7 @@ fn putWithCustomHeader(allocator: Allocator, easy: Easy) !void {
                 .age = 15,
             },
             .method = "PUT",
-            .url = "https://httpbin.liujiacai.net/anything/zig-curl",
+            .url = "https://edgebin.liujiacai.net/anything/zig-curl",
         },
     );
 
@@ -97,7 +97,7 @@ fn postMultiPart(allocator: Allocator, easy: Easy) !void {
     try multi_part.addPart("readme", .{ .file = "examples/test.txt" });
     defer multi_part.deinit();
 
-    try easy.setUrl("https://httpbin.liujiacai.net/anything/mp");
+    try easy.setUrl("https://edgebin.liujiacai.net/anything/mp");
     try easy.setMethod(.PUT);
     try easy.setMultiPart(multi_part);
     try easy.setVerbose(true);

@@ -3,7 +3,7 @@ const println = @import("util.zig").println;
 const curl = @import("curl");
 const Allocator = std.mem.Allocator;
 
-const URL = "https://httpbin.liujiacai.net/anything";
+const URL = "https://edgebin.liujiacai.net/anything";
 
 pub fn main() !void {
     println("Upload demo");

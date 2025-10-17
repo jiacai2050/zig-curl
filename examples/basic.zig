@@ -1,7 +1,7 @@
 const std = @import("std");
 const curl = @import("curl");
 
-const URL = "https://httpbin.liujiacai.net/anything";
+const URL = "https://edgebin.liujiacai.net/anything";
 
 pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;

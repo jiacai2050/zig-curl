@@ -27,13 +27,6 @@ jobs:
       - name: Run tests
         run: |
           make test
-      - uses: actions/setup-go@v6
-        with:
-          go-version: 'stable'
-      - name: Run examples
-        run: |
-          ./.github/server.sh
-          make run
       - name: Install deps
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -66,10 +59,6 @@ jobs:
       - name: Run tests
         run: |
           make test
-      - name: Run examples
-        run: |
-          ./.github/server.sh
-          make run
       - name: Install deps
         if: matrix.os == 'ubuntu-latest'
         run: |

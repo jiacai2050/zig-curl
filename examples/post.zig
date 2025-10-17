@@ -20,7 +20,7 @@ pub fn main() !void {
     var writer = std.Io.Writer.Allocating.init(allocator);
     defer writer.deinit();
     const resp = try easy.fetch(
-        "https://httpbin.liujiacai.net/anything",
+        "https://edgebin.liujiacai.net/anything",
         .{
             .method = .POST,
             .body = payload,
