@@ -26,7 +26,10 @@ jobs:
       - uses: mlugg/setup-zig@v2
       - name: Run tests
         run: |
-          make test
+          make test run
+      - name: Run tests with mbedtls_pthreads
+        run: |
+          make test run ARGS="-Dmbedtls_pthreads=true"
       - name: Install deps
         if: matrix.os == 'ubuntu-latest'
         run: |

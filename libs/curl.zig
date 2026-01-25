@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sanitize_c: ?std.zig.SanitizeC) ?*std.Build.Step.Compile {
+pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sanitize_c: ?std.zig.SanitizeC, mbedtls_pthreads: bool) ?*std.Build.Step.Compile {
     const lib = b.addLibrary(.{
         .linkage = .static,
         .name = "curl",
@@ -30,6 +30,10 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     lib.root_module.addCMacro("CURL_DISABLE_LDAP", "1");
     lib.root_module.addCMacro("CURL_DISABLE_LDAPS", "1");
     lib.root_module.addCMacro("USE_MBEDTLS", "1");
+    if (mbedtls_pthreads) {
+        lib.root_module.addCMacro("MBEDTLS_THREADING_C", "1");
+        lib.root_module.addCMacro("MBEDTLS_THREADING_PTHREAD", "1");
+    }
     lib.root_module.addCMacro("CURL_DISABLE_DICT", "1");
     lib.root_module.addCMacro("CURL_DISABLE_FILE", "1");
     lib.root_module.addCMacro("CURL_DISABLE_FTP", "1");

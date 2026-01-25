@@ -1,5 +1,4 @@
-
-ARGS = ${ZIG_ARGS}
+ARGS ?= ${ZIG_ARGS}
 
 ifeq ($(shell uname), Linux)
 	SED_ARGS = -i
