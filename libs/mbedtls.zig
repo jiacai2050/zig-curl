@@ -1,7 +1,7 @@
 const std = @import("std");
 const ResolvedTarget = std.Build.ResolvedTarget;
 
-pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sanitize_c: ?std.zig.SanitizeC) ?*std.Build.Step.Compile {
+pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sanitize_c: ?std.zig.SanitizeC, enable_pthreads: bool) ?*std.Build.Step.Compile {
     const lib = b.addLibrary(.{
         .linkage = .static,
         .name = "mbedtls",
@@ -25,6 +25,10 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     lib.addIncludePath(mbedtls_dep.path("library"));
     lib.installHeadersDirectory(mbedtls_dep.path("include/mbedtls"), "mbedtls", .{});
     lib.installHeadersDirectory(mbedtls_dep.path("include/psa"), "psa", .{});
+    if (enable_pthreads) {
+        lib.root_module.addCMacro("MBEDTLS_THREADING_C", "1");
+        lib.root_module.addCMacro("MBEDTLS_THREADING_PTHREAD", "1");
+    }
 
     if (target.result.os.tag == .windows) {
         lib.linkSystemLibrary("ws2_32");
