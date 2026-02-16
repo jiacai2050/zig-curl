@@ -77,7 +77,7 @@ pub const NonCopyingData = struct {
             return to_read;
         }
 
-        pub fn seek(user_data: ?*anyopaque, offset: c_long, origin: c_int) callconv(.c) c_int {
+        pub fn seek(user_data: ?*anyopaque, offset: c_longlong, origin: c_int) callconv(.c) c_int {
             var source: *DataWithOffset = @ptrCast(@alignCast(user_data orelse return c.CURL_READFUNC_ABORT));
             const new_pos = switch (origin) {
                 c.SEEK_SET => offset,
