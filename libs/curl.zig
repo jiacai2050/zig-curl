@@ -200,6 +200,37 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     lib.root_module.addCMacro("USE_THREADS_POSIX", "1");
     lib.root_module.addCMacro("USE_UNIX_SOCKETS", "1");
     lib.root_module.addCMacro("_FILE_OFFSET_BITS", "64");
+
+    // define CURL_OS based on target platform
+    // current insupported platform : Itanium, RiscOS, OS/400 
+    switch(target.result.os.tag) {
+        .windows => {
+            switch(target.result.cpu.arch) {
+                .x86 => lib.root_module.addCMacro("CURL_OS", "i386-pc-win32"),
+                .x86_64 => lib.root_module.addCMacro("CURL_OS", "x86_64-pc-win32"),
+                .thumb => lib.root_module.addCMacro("CURL_OS", "thumbv7a-pc-win32"),
+                .aarch64 => lib.root_module.addCMacro("CURL_OS", "aarch64-pc-win32"),
+                else => lib.root_module.addCMacro("CURL_OS", "unknown-pc-win32")
+            }
+        },
+        .linux => {
+            switch(target.result.cpu.arch) {
+                .x86_64 => lib.root_module.addCMacro("CURL_OS", "x86_64-pc-linux-gnu"),
+                .aarch64 => lib.root_module.addCMacro("CURL_OS", "aarch64-pc-linux-gnu"),
+                else => lib.root_module.addCMacro("CURL_OS", "Linux")
+            }
+        },
+        .macos => lib.root_module.addCMacro("CURL_OS", "mac"),
+        .freebsd => lib.root_module.addCMacro("CURL_OS", "freebsd"),
+        else => {
+            const arch = @tagName(target.result.cpu.arch);
+            const os = @tagName(target.result.os.tag);
+
+            const system_name = std.fmt.allocPrint(b.allocator, "{s}-pc-{s}", .{ arch, os }) catch "unknown-pc-unknown";
+            lib.root_module.addCMacro("CURL_OS", system_name);
+        }
+    }
+
     return lib;
 }
 
@@ -342,7 +373,6 @@ const srcs = &.{
     "lib/http_proxy.c",
     "lib/curlx/inet_ntop.c",
     "lib/curlx/timeval.c",
-    "lib/asyn-ares.c",
     "lib/asyn-base.c",
     "lib/rtsp.c",
     "lib/sha256.c",
