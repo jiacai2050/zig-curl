@@ -201,37 +201,44 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     lib.root_module.addCMacro("USE_UNIX_SOCKETS", "1");
     lib.root_module.addCMacro("_FILE_OFFSET_BITS", "64");
 
-    // define CURL_OS based on target platform
-    // current insupported platform : Itanium, RiscOS, OS/400
+    const system_name = getCurlOS(b.allocator, target);
+    const curl_os = std.fmt.allocPrint(b.allocator, "\"{s}\"", .{ system_name }) catch "\"unknown-pc-unknown\"";
+
+    lib.root_module.addCMacro("CURL_OS", curl_os);
+
+    return lib;
+}
+
+// define CURL_OS based on target platform
+// current insupported platform : Itanium, RiscOS, OS/400
+fn getCurlOS(allocator: std.mem.Allocator, target: std.Build.ResolvedTarget) []const u8 {
     switch (target.result.os.tag) {
         .windows => {
             switch (target.result.cpu.arch) {
-                .x86 => lib.root_module.addCMacro("CURL_OS", "\"i386-pc-win32\""),
-                .x86_64 => lib.root_module.addCMacro("CURL_OS", "\"x86_64-pc-win32\""),
-                .thumb => lib.root_module.addCMacro("CURL_OS", "\"thumbv7a-pc-win32\""),
-                .aarch64 => lib.root_module.addCMacro("CURL_OS", "\"aarch64-pc-win32\""),
-                else => lib.root_module.addCMacro("CURL_OS", "\"unknown-pc-win32\""),
+                .x86 => return "i386-pc-win32",
+                .x86_64 => return "x86_64-pc-win32",
+                .thumb => return "thumbv7a-pc-win32",
+                .aarch64 => return "aarch64-pc-win32",
+                else => return "unknown-pc-win32",
             }
         },
         .linux => {
             switch (target.result.cpu.arch) {
-                .x86_64 => lib.root_module.addCMacro("CURL_OS", "\"x86_64-pc-linux-gnu\""),
-                .aarch64 => lib.root_module.addCMacro("CURL_OS", "\"aarch64-pc-linux-gnu\""),
-                else => lib.root_module.addCMacro("CURL_OS", "\"Linux\""),
+                .x86_64 => return "x86_64-pc-linux-gnu",
+                .aarch64 => return "aarch64-pc-linux-gnu",
+                else => return "Linux",
             }
         },
-        .macos => lib.root_module.addCMacro("CURL_OS", "\"mac\""),
-        .freebsd => lib.root_module.addCMacro("CURL_OS", "\"freebsd\""),
+        .macos => return "mac",
+        .freebsd => return "freebsd",
         else => {
             const arch = @tagName(target.result.cpu.arch);
             const os = @tagName(target.result.os.tag);
 
-            const system_name = std.fmt.allocPrint(b.allocator, "\"{s}-pc-{s}\"", .{ arch, os }) catch "\"unknown-pc-unknown\"";
-            lib.root_module.addCMacro("CURL_OS", system_name);
+            const system_name = std.fmt.allocPrint(allocator, "\"{s}-pc-{s}\"", .{ arch, os }) catch "\"unknown-pc-unknown\"";
+            return system_name;
         },
     }
-
-    return lib;
 }
 
 const srcs = &.{
