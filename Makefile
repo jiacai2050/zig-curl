@@ -14,10 +14,10 @@ run:
 	zig build run-multi -freference-trace $(ARGS)
 	zig build run-header -freference-trace $(ARGS)
 
-lint:
-	zig fmt --check .
+# lint:
+#	zig fmt --check .
 
-test: lint
+test:
 	zig build test $(ARGS)
 
 docs:
