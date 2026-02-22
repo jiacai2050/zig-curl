@@ -14,10 +14,13 @@ run:
 	zig build run-multi -freference-trace $(ARGS)
 	zig build run-header -freference-trace $(ARGS)
 
+fix:
+	zig fmt  .
+
 lint:
 	zig fmt --check .
 
-test: lint
+test:
 	zig build test $(ARGS)
 
 docs:
@@ -30,4 +33,4 @@ clean:
 serve:
 	cd server && go run main.go
 
-.PHONY: run lint test docs clean serve
+.PHONY: run fix lint test docs clean serve

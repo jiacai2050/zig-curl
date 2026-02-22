@@ -11,10 +11,10 @@
         "LICENSE",
     },
     .dependencies = .{
+        // https://github.com/curl/curl/releases/tag/curl-8_18_0
         .curl = .{
-            // https://github.com/curl/curl/releases/tag/curl-8_8_0
-            .url = "https://github.com/curl/curl/releases/download/curl-8_8_0/curl-8.8.0.tar.gz",
-            .hash = "N-V-__8AAHipPQF9UuLPiaV1CtJzZIxvTN61tMGdFx8LGjIV",
+            .url = "https://github.com/curl/curl/releases/download/curl-8_18_0/curl-8.18.0.tar.gz",
+            .hash = "N-V-__8AALp9QAGn6CCHZ6fK_FfMyGtG824LSHYHHasM3w-y",
             .lazy = true,
         },
         // https://github.com/madler/zlib/releases/tag/v1.3.1
