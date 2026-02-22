@@ -209,7 +209,7 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
 }
 
 // define CURL_OS based on target platform
-// current insupported platform : Itanium, RiscOS, OS/400
+// current unsupported platform : Itanium, RiscOS, OS/400
 fn getCurlOS(allocator: std.mem.Allocator, target: std.Build.ResolvedTarget) []const u8 {
     switch (target.result.os.tag) {
         .windows => {
