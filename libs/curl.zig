@@ -201,7 +201,11 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     lib.root_module.addCMacro("USE_UNIX_SOCKETS", "1");
     lib.root_module.addCMacro("_FILE_OFFSET_BITS", "64");
 
-    const system_name = getCurlOS(b.allocator, target);
+    const system_name = getCurlOS(target) orelse blk: {
+        const arch = @tagName(target.result.cpu.arch);
+        const os = @tagName(target.result.os.tag);
+        break :blk std.fmt.allocPrint(b.allocator, "{s}-pc-{s}", .{ arch, os }) catch unreachable;
+    };
     const curl_os = std.fmt.allocPrint(b.allocator, "\"{s}\"", .{system_name}) catch unreachable;
     lib.root_module.addCMacro("CURL_OS", curl_os);
 
@@ -210,7 +214,7 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
 
 // define CURL_OS based on target platform
 // current unsupported platform : Itanium, RiscOS, OS/400
-fn getCurlOS(allocator: std.mem.Allocator, target: std.Build.ResolvedTarget) []const u8 {
+fn getCurlOS(target: std.Build.ResolvedTarget) ?[]const u8 {
     switch (target.result.os.tag) {
         .windows => {
             switch (target.result.cpu.arch) {
@@ -231,11 +235,7 @@ fn getCurlOS(allocator: std.mem.Allocator, target: std.Build.ResolvedTarget) []c
         .macos => return "mac",
         .freebsd => return "freebsd",
         else => {
-            const arch = @tagName(target.result.cpu.arch);
-            const os = @tagName(target.result.os.tag);
-
-            const system_name = std.fmt.allocPrint(allocator, "\"{s}-pc-{s}\"", .{ arch, os }) catch "\"unknown-pc-unknown\"";
-            return system_name;
+            return null;
         },
     }
 }
