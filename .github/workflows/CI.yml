@@ -14,19 +14,6 @@ on:
       - '**.yml'
 
 jobs:
-  fmt:
-    timeout-minutes: 10
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: mlugg/setup-zig@v2
-      - name: Run linter
-        run: |
-          make lint
   test-vendor:
     timeout-minutes: 10
     runs-on: ${{ matrix.os }}
@@ -37,6 +24,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
+      - name: Run lint
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          make lint
       - name: Run tests
         run: |
           make test run

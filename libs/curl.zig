@@ -202,8 +202,7 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     lib.root_module.addCMacro("_FILE_OFFSET_BITS", "64");
 
     const system_name = getCurlOS(b.allocator, target);
-    const curl_os = std.fmt.allocPrint(b.allocator, "\"{s}\"", .{system_name}) catch "\"unknown-pc-unknown\"";
-
+    const curl_os = std.fmt.allocPrint(b.allocator, "\"{s}\"", .{system_name}) catch unreachable;
     lib.root_module.addCMacro("CURL_OS", curl_os);
 
     return lib;
