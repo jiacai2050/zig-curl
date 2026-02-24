@@ -9,9 +9,11 @@ const util = @import("util.zig");
 const Easy = @import("Easy.zig");
 const c = util.c;
 const checkCode = @import("errors.zig").checkCode;
+const Diagnostics = @import("errors.zig").Diagnostics;
 const Reader = std.Io.Reader;
 
 mime_handle: *c.curl_mime,
+diagnostics: ?*Diagnostics,
 
 /// `NonCopyingData` allows setting a mime part's body data from a custom source without copying the data.
 ///
@@ -143,10 +145,11 @@ pub const DataSource = union(enum) {
     non_copying: NonCopyingData,
 };
 
-pub fn init(easy: Easy) !@This() {
+pub fn init(easy: Easy, diagnostics: ?*Diagnostics) !@This() {
     const mime_handle = if (c.curl_mime_init(easy.handle)) |mh| mh else return error.MimeInit;
     return .{
         .mime_handle = mime_handle,
+        .diagnostics = diagnostics,
     };
 }
 
@@ -157,13 +160,13 @@ pub fn deinit(self: @This()) void {
 pub fn addPart(self: @This(), name: [:0]const u8, source: DataSource) !void {
     const part = if (c.curl_mime_addpart(self.mime_handle)) |part| part else return error.MimeAddPart;
 
-    try checkCode(c.curl_mime_name(part, name));
+    try checkCode(c.curl_mime_name(part, name), self.diagnostics);
     switch (source) {
         .data => |slice| {
-            try checkCode(c.curl_mime_data(part, slice.ptr, slice.len));
+            try checkCode(c.curl_mime_data(part, slice.ptr, slice.len), self.diagnostics);
         },
         .file => |filepath| {
-            try checkCode(c.curl_mime_filedata(part, filepath));
+            try checkCode(c.curl_mime_filedata(part, filepath), self.diagnostics);
         },
         .non_copying => |ncdata| {
             try checkCode(c.curl_mime_data_cb(
@@ -173,7 +176,7 @@ pub fn addPart(self: @This(), name: [:0]const u8, source: DataSource) !void {
                 ncdata.vtable.seek,
                 ncdata.vtable.free,
                 ncdata.ptr,
-            ));
+            ), self.diagnostics);
         },
     }
 }

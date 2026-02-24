@@ -118,10 +118,25 @@ pub fn main() !void {
 
     const ca_bundle = try curl.allocCABundle(allocator);
     defer ca_bundle.deinit();
-    const easy = try Easy.init(.{ .ca_bundle = ca_bundle });
+
+    var diagnostics: Easy.Diagnostics = .{};
+    const easy = try Easy.init(.{
+        .ca_bundle = ca_bundle,
+        .diagnostics = &diagnostics,
+    });
     defer easy.deinit();
 
     println("PUT with custom header demo");
-    try putWithCustomHeader(allocator, easy);
-    try postMultiPart(allocator, easy);
+    putWithCustomHeader(allocator, easy) catch |err| {
+        if (diagnostics.error_code) |error_code| {
+            std.log.err("putWithCustomHeader encountered a curl error! error code: {}", .{error_code.code});
+        }
+        return err;
+    };
+    postMultiPart(allocator, easy) catch |err| {
+        if (diagnostics.error_code) |error_code| {
+            std.log.err("postMultipart encountered a curl error! error code: {}", .{error_code.code});
+        }
+        return err;
+    };
 }

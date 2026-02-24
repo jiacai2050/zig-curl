@@ -31,10 +31,22 @@ pub fn headerErrorFrom(code: c.CURLHcode) ?HeaderError {
     };
 }
 
-pub fn checkCode(code: c.CURLcode) !void {
+/// Information about the success or failure of the curl call.
+pub const Diagnostics = struct {
+    error_code: ?union(enum) {
+        /// https://curl.se/libcurl/c/libcurl-errors.html
+        code: c.CURLcode,
+        /// https://curl.se/libcurl/c/libcurl-errors.html#CURLMcode
+        m_code: c.CURLMcode,
+    } = null,
+};
+
+pub fn checkCode(code: c.CURLcode, diagnostics: ?*Diagnostics) !void {
     if (code == c.CURLE_OK) {
         return;
     }
+
+    if (diagnostics) |diag| diag.error_code = .{ .code = code };
 
     // https://curl.se/libcurl/c/libcurl-errors.html
     std.log.debug("curl err code:{d}, msg:{s}\n", .{ code, c.curl_easy_strerror(code) });
@@ -42,10 +54,12 @@ pub fn checkCode(code: c.CURLcode) !void {
     return error.Unexpected;
 }
 
-pub fn checkMCode(code: c.CURLMcode) !void {
+pub fn checkMCode(code: c.CURLMcode, diagnostics: ?*Diagnostics) !void {
     if (code == c.CURLM_OK) {
         return;
     }
+
+    if (diagnostics) |diag| diag.error_code = .{ .m_code = code };
 
     // https://curl.se/libcurl/c/libcurl-errors.html
     std.log.debug("curlm err code:{d}, msg:{s}\n", .{

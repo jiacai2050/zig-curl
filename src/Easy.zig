@@ -11,6 +11,7 @@ const Writer = std.Io.Writer;
 const Reader = std.Io.Reader;
 const Allocator = mem.Allocator;
 const checkCode = errors.checkCode;
+pub const Diagnostics = errors.Diagnostics;
 const c = util.c;
 const ResizableBuffer = util.ResizableBuffer;
 
@@ -22,6 +23,7 @@ handle: *c.CURL,
 timeout_ms: usize,
 user_agent: [:0]const u8,
 ca_bundle: ?ResizableBuffer,
+diagnostics: ?*Diagnostics,
 
 pub const HttpVersion = enum(c_long) {
     none = c.CURL_HTTP_VERSION_NONE,
@@ -201,9 +203,9 @@ pub const Response = struct {
         };
     }
 
-    pub fn getRedirectCount(self: Response) !usize {
+    pub fn getRedirectCount(self: Response, diagnostics: ?*Diagnostics) !usize {
         var redirects: c_long = undefined;
-        try checkCode(c.curl_easy_getinfo(self.handle, c.CURLINFO_REDIRECT_COUNT, &redirects));
+        try checkCode(c.curl_easy_getinfo(self.handle, c.CURLINFO_REDIRECT_COUNT, &redirects), diagnostics);
         return @intCast(redirects);
     }
 };
@@ -237,6 +239,9 @@ pub const Options = struct {
     /// The maximum time in milliseconds that the entire transfer operation to take.
     default_timeout_ms: usize = 30_000,
     default_user_agent: [:0]const u8 = "zig-curl/" ++ @import("build_info").version,
+    /// If provided, curl errors will be populated inside,
+    /// so that user-friendly error messages can be displayed.
+    diagnostics: ?*Diagnostics = null,
 };
 
 pub fn init(options: Options) !Self {
@@ -246,6 +251,7 @@ pub fn init(options: Options) !Self {
             .ca_bundle = options.ca_bundle,
             .timeout_ms = options.default_timeout_ms,
             .user_agent = options.default_user_agent,
+            .diagnostics = options.diagnostics,
         }
     else
         error.CurlInit;
@@ -256,38 +262,38 @@ pub fn deinit(self: Self) void {
 }
 
 pub fn createMultiPart(self: Self) !MultiPart {
-    return MultiPart.init(self);
+    return MultiPart.init(self, self.diagnostics);
 }
 
 pub fn setUrl(self: Self, url: [:0]const u8) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_URL, url.ptr));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_URL, url.ptr), self.diagnostics);
 }
 
 pub fn setMaxRedirects(self: Self, redirects: u32) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, redirects)));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, redirects)), self.diagnostics);
 }
 
 pub fn setMethod(self: Self, method: Method) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, method.asString().ptr));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CUSTOMREQUEST, method.asString().ptr), self.diagnostics);
 }
 
 pub fn setVerbose(self: Self, verbose: bool) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, verbose));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_VERBOSE, verbose), self.diagnostics);
 }
 
 pub fn setPostFields(self: Self, body: []const u8) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDS, body.ptr));
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, body.len));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDS, body.ptr), self.diagnostics);
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_POSTFIELDSIZE, body.len), self.diagnostics);
 }
 
 pub fn setMultiPart(self: Self, multi_part: MultiPart) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MIMEPOST, multi_part.mime_handle));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MIMEPOST, multi_part.mime_handle), self.diagnostics);
 }
 
 pub fn setUpload(self: Self, up: *Upload) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_UPLOAD, @as(c_int, 1)));
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_READFUNCTION, Upload.readFunction));
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_READDATA, up));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_UPLOAD, @as(c_int, 1)), self.diagnostics);
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_READFUNCTION, Upload.readFunction), self.diagnostics);
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_READDATA, up), self.diagnostics);
 }
 
 /// Ask libcurl to use the specific HTTP versions.
@@ -300,12 +306,12 @@ pub fn setHttpVersion(self: Self, version: HttpVersion) !void {
         self.handle,
         c.CURLOPT_HTTP_VERSION,
         @intFromEnum(version),
-    ));
+    ), self.diagnostics);
 }
 
 pub fn setFollowLocation(self: Self, enable: bool) !void {
     const param: c_long = @intCast(@intFromBool(enable));
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_FOLLOWLOCATION, param));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_FOLLOWLOCATION, param), self.diagnostics);
 }
 
 pub fn reset(self: Self) void {
@@ -319,19 +325,19 @@ pub fn setHeaders(self: Self, headers: Headers) !void {
 }
 
 pub fn setHeadersC(self: Self, headers: *c.struct_curl_slist) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, headers));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_HTTPHEADER, headers), self.diagnostics);
 }
 
 pub fn setUnixSocketPath(self: Self, path: [:0]const u8) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_UNIX_SOCKET_PATH, path.ptr));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_UNIX_SOCKET_PATH, path.ptr), self.diagnostics);
 }
 
 pub fn setPrivate(self: Self, data: *const anyopaque) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PRIVATE, data));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PRIVATE, data), self.diagnostics);
 }
 
 pub fn setWritedata(self: Self, data: *anyopaque) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEDATA, data));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEDATA, data), self.diagnostics);
 }
 
 /// Set a write function that will be called with the response body.
@@ -345,7 +351,7 @@ pub fn setWritefunction(
     self: Self,
     func: *const fn ([*c]c_char, c_uint, c_uint, *anyopaque) callconv(.c) c_uint,
 ) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, func));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_WRITEFUNCTION, func), self.diagnostics);
 }
 
 /// Set `WRITEDATA` to `Writer` and `WRITEFUNCTION` to a function that calls with the writer.
@@ -368,22 +374,22 @@ pub fn setWriter(
 }
 
 pub fn setDebugdata(self: Self, data: *const anyopaque) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_DEBUGDATA, data));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_DEBUGDATA, data), self.diagnostics);
 }
 
 pub fn setDebugfunction(
     self: Self,
     func: *const fn (*c.CURL, c.curl_infotype, [*]c_char, c_uint, *anyopaque) callconv(.c) c_int,
 ) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_DEBUGFUNCTION, func));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_DEBUGFUNCTION, func), self.diagnostics);
 }
 
 pub fn setUsername(self: Self, username: [:0]const u8) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_USERNAME, username.ptr));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_USERNAME, username.ptr), self.diagnostics);
 }
 
 pub fn setPassword(self: Self, password: [:0]const u8) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PASSWORD, password.ptr));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PASSWORD, password.ptr), self.diagnostics);
 }
 
 pub const IpResolve = enum(c_int) {
@@ -393,22 +399,22 @@ pub const IpResolve = enum(c_int) {
 };
 
 pub fn setIpResolve(self: Self, ipr: IpResolve) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_IPRESOLVE, @intFromEnum(ipr)));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_IPRESOLVE, @intFromEnum(ipr)), self.diagnostics);
 }
 
 pub fn setInsecure(self: Self, enable: bool) !void {
     const param: c_long = @intCast(@intFromBool(!enable));
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_SSL_VERIFYPEER, param));
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_SSL_VERIFYHOST, param));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_SSL_VERIFYPEER, param), self.diagnostics);
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_SSL_VERIFYHOST, param), self.diagnostics);
 }
 
 /// Perform sends an HTTP request and returns an HTTP response.
 pub fn perform(self: Self) !Response {
     try self.setCommonOpts();
-    try checkCode(c.curl_easy_perform(self.handle));
+    try checkCode(c.curl_easy_perform(self.handle), self.diagnostics);
 
     var status_code: c_long = 0;
-    try checkCode(c.curl_easy_getinfo(self.handle, c.CURLINFO_RESPONSE_CODE, &status_code));
+    try checkCode(c.curl_easy_getinfo(self.handle, c.CURLINFO_RESPONSE_CODE, &status_code), self.diagnostics);
 
     return .{
         .status_code = @intCast(status_code),
@@ -504,8 +510,8 @@ pub fn setCommonOpts(self: Self) !void {
             .len = bundle.items.len,
             .flags = c.CURL_BLOB_NOCOPY,
         };
-        try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CAINFO_BLOB, &blob));
+        try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_CAINFO_BLOB, &blob), self.diagnostics);
     }
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_TIMEOUT_MS, self.timeout_ms));
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_USERAGENT, self.user_agent.ptr));
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_TIMEOUT_MS, self.timeout_ms), self.diagnostics);
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_USERAGENT, self.user_agent.ptr), self.diagnostics);
 }
