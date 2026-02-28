@@ -36,7 +36,9 @@ pub fn main() !void {
     defer wtr2.deinit();
 
     var easy1 = try newEasy(&wtr1.writer, "http://edgebin.liujiacai.net/headers");
+    defer easy1.deinit();
     var easy2 = try newEasy(&wtr2.writer, "http://edgebin.liujiacai.net/ip");
+    defer easy2.deinit();
 
     try multi.addHandle(&easy1);
     try multi.addHandle(&easy2);
