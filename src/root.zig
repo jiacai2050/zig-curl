@@ -7,6 +7,7 @@
 const std = @import("std");
 const util = @import("util.zig");
 pub const checkCode = @import("errors.zig").checkCode;
+pub const Diagnostics = @import("errors.zig").Diagnostics;
 
 pub const Easy = @import("Easy.zig");
 pub const Multi = @import("Multi.zig");
@@ -24,8 +25,8 @@ pub const libcurl = util.c;
 /// must be called before the program calls any other function in libcurl.
 /// A common place is in the beginning of the program. More see:
 /// https://curl.se/libcurl/c/curl_global_init.html
-pub fn globalInit() !void {
-    try checkCode(libcurl.curl_global_init(libcurl.CURL_GLOBAL_ALL));
+pub fn globalInit(diagnostics: ?*Diagnostics) !void {
+    try checkCode(libcurl.curl_global_init(libcurl.CURL_GLOBAL_ALL), diagnostics);
 }
 
 /// This function releases resources acquired by curl_global_init.

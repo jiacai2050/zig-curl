@@ -13,7 +13,7 @@ pub fn main() !void {
 
     const ca_bundle = try curl.allocCABundle(allocator);
     defer ca_bundle.deinit();
-    const easy = try curl.Easy.init(.{
+    var easy = try curl.Easy.init(.{
         .ca_bundle = ca_bundle,
     });
     defer easy.deinit();
@@ -37,10 +37,10 @@ pub fn main() !void {
     easy.reset();
 
     // Upload with multipart/form-data
-    try multipartUpload(allocator, easy);
+    try multipartUpload(allocator, &easy);
 }
 
-fn multipartUpload(allocator: Allocator, easy: curl.Easy) !void {
+fn multipartUpload(allocator: Allocator, easy: *curl.Easy) !void {
     std.debug.print("Multipart upload demo\n", .{});
     try easy.setUrl(URL);
     var multi_part = try easy.createMultiPart();

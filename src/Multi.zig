@@ -15,16 +15,21 @@ const mem = std.mem;
 const fmt = std.fmt;
 const Allocator = mem.Allocator;
 const checkMCode = errors.checkMCode;
+pub const Diagnostics = errors.Diagnostics;
 const Self = @This();
 
 multi: *c.CURLM,
+diagnostics: ?*Diagnostics,
 
-pub fn init() !Self {
+pub fn init(diagnostics: ?*Diagnostics) !Self {
     const core = c.curl_multi_init();
     if (core == null) {
         return error.InitMulti;
     }
-    return .{ .multi = core.? };
+    return .{
+        .multi = core.?,
+        .diagnostics = diagnostics,
+    };
 }
 
 pub fn deinit(self: Self) void {
@@ -33,15 +38,15 @@ pub fn deinit(self: Self) void {
 
 /// Adds the easy handle to the multi_handle.
 /// https://curl.se/libcurl/c/curl_multi_add_handle.html
-pub fn addHandle(self: Self, easy: Easy) !void {
+pub fn addHandle(self: Self, easy: *Easy) !void {
     try easy.setCommonOpts();
-    return checkMCode(c.curl_multi_add_handle(self.multi, easy.handle));
+    return checkMCode(c.curl_multi_add_handle(self.multi, easy.handle), self.diagnostics);
 }
 
 /// Removes a given easy_handle from the multi_handle.
 /// https://curl.se/libcurl/c/curl_multi_remove_handle.html
 pub fn removeHandle(self: Self, handle: *c.CURL) !void {
-    return checkMCode(c.curl_multi_remove_handle(self.multi, handle));
+    return checkMCode(c.curl_multi_remove_handle(self.multi, handle), self.diagnostics);
 }
 
 /// Performs transfers on all the added handles that need attention in a non-blocking fashion.
@@ -49,7 +54,7 @@ pub fn removeHandle(self: Self, handle: *c.CURL) !void {
 /// https://curl.se/libcurl/c/curl_multi_perform.html
 pub fn perform(self: Self) !c_int {
     var still_running: c_int = undefined;
-    try checkMCode(c.curl_multi_perform(self.multi, &still_running));
+    try checkMCode(c.curl_multi_perform(self.multi, &still_running), self.diagnostics);
 
     return still_running;
 }
@@ -66,7 +71,7 @@ pub fn poll(self: Self, extra_fds: ?[]c.curl_waitfd, timeout_ms: c_int) !c_int {
         fd_len = @intCast(v.len);
     }
 
-    try checkMCode(c.curl_multi_poll(self.multi, fds, fd_len, timeout_ms, &num_fds));
+    try checkMCode(c.curl_multi_poll(self.multi, fds, fd_len, timeout_ms, &num_fds), self.diagnostics);
     return num_fds;
 }
 
@@ -74,7 +79,7 @@ pub fn poll(self: Self, extra_fds: ?[]c.curl_waitfd, timeout_ms: c_int) !c_int {
 /// This function can be called from any thread.
 /// https://curl.se/libcurl/c/curl_multi_wakeup.html
 pub fn wakeup(self: Self) !void {
-    try checkMCode(c.curl_multi_wakeup(self.multi));
+    try checkMCode(c.curl_multi_wakeup(self.multi), self.diagnostics);
 }
 
 pub const Info = struct {

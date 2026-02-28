@@ -8,7 +8,7 @@ pub fn main() !void {
 
     const ca_bundle = try curl.allocCABundle(allocator);
     defer ca_bundle.deinit();
-    const easy = try curl.Easy.init(.{
+    var easy = try curl.Easy.init(.{
         .ca_bundle = ca_bundle,
     });
     defer easy.deinit();
