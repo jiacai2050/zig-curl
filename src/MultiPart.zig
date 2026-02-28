@@ -145,7 +145,7 @@ pub const DataSource = union(enum) {
     non_copying: NonCopyingData,
 };
 
-pub fn init(easy: Easy, diagnostics: ?*Diagnostics) !@This() {
+pub fn init(easy: *Easy, diagnostics: ?*Diagnostics) !@This() {
     const mime_handle = if (c.curl_mime_init(easy.handle)) |mh| mh else return error.MimeInit;
     return .{
         .mime_handle = mime_handle,

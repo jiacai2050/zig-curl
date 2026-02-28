@@ -10,7 +10,7 @@ const checkCode = curl.checkCode;
 const Writer = std.io.Writer;
 
 fn newEasy(writer: *Writer, url: [:0]const u8) !Easy {
-    const easy = try Easy.init(.{});
+    var easy = try Easy.init(.{});
     try easy.setUrl(url);
     try easy.setWriter(writer);
     // CURLOPT_PRIVATE allows us to store a pointer to the ctx in the easy handle
@@ -35,8 +35,11 @@ pub fn main() !void {
     var wtr2 = std.Io.Writer.Allocating.init(allocator);
     defer wtr2.deinit();
 
-    try multi.addHandle(try newEasy(&wtr1.writer, "http://edgebin.liujiacai.net/headers"));
-    try multi.addHandle(try newEasy(&wtr2.writer, "http://edgebin.liujiacai.net/ip"));
+    var easy1 = try newEasy(&wtr1.writer, "http://edgebin.liujiacai.net/headers");
+    var easy2 = try newEasy(&wtr2.writer, "http://edgebin.liujiacai.net/ip");
+
+    try multi.addHandle(&easy1);
+    try multi.addHandle(&easy2);
 
     var keep_running = true;
     while (keep_running) {

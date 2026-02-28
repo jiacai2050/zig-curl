@@ -20,7 +20,7 @@ const Response = struct {
     url: []const u8,
 };
 
-fn putWithCustomHeader(allocator: Allocator, easy: Easy) !void {
+fn putWithCustomHeader(allocator: Allocator, easy: *Easy) !void {
     const body =
         \\ {"name": "John", "age": 15}
     ;
@@ -87,7 +87,7 @@ fn putWithCustomHeader(allocator: Allocator, easy: Easy) !void {
     }
 }
 
-fn postMultiPart(allocator: Allocator, easy: Easy) !void {
+fn postMultiPart(allocator: Allocator, easy: *Easy) !void {
     // Reset old options, e.g. headers.
     easy.reset();
 
@@ -119,22 +119,20 @@ pub fn main() !void {
     const ca_bundle = try curl.allocCABundle(allocator);
     defer ca_bundle.deinit();
 
-    var diagnostics: Easy.Diagnostics = .{};
-    const easy = try Easy.init(.{
+    var easy = try Easy.init(.{
         .ca_bundle = ca_bundle,
-        .diagnostics = &diagnostics,
     });
     defer easy.deinit();
 
     println("PUT with custom header demo");
-    putWithCustomHeader(allocator, easy) catch |err| {
-        if (diagnostics.error_code) |error_code| {
+    putWithCustomHeader(allocator, &easy) catch |err| {
+        if (easy.diagnostics.error_code) |error_code| {
             std.log.err("putWithCustomHeader encountered a curl error! error code: {}", .{error_code.code});
         }
         return err;
     };
-    postMultiPart(allocator, easy) catch |err| {
-        if (diagnostics.error_code) |error_code| {
+    postMultiPart(allocator, &easy) catch |err| {
+        if (easy.diagnostics.error_code) |error_code| {
             std.log.err("postMultipart encountered a curl error! error code: {}", .{error_code.code});
         }
         return err;

@@ -3,7 +3,7 @@ const curl = @import("curl");
 const Easy = curl.Easy;
 const println = @import("util.zig").println;
 
-fn iterateHeaders(easy: Easy) !void {
+fn iterateHeaders(easy: *Easy) !void {
     // Reset old options, e.g. headers.
     easy.reset();
 
@@ -29,7 +29,7 @@ fn iterateHeaders(easy: Easy) !void {
     }
 }
 
-fn iterateRedirectedHeaders(easy: Easy) !void {
+fn iterateRedirectedHeaders(easy: *Easy) !void {
     try easy.setFollowLocation(true);
     const resp = try easy.fetch("https://edgebin.liujiacai.net/redirect/2", .{});
 
@@ -65,7 +65,7 @@ pub fn main() !void {
 
     const ca_bundle = try curl.allocCABundle(allocator);
     defer ca_bundle.deinit();
-    const easy = try Easy.init(.{ .ca_bundle = ca_bundle });
+    var easy = try Easy.init(.{ .ca_bundle = ca_bundle });
     defer easy.deinit();
 
     if (comptime !curl.hasParseHeaderSupport()) {
@@ -74,11 +74,11 @@ pub fn main() !void {
     }
 
     println("Iterate headers demo");
-    try iterateHeaders(easy);
+    try iterateHeaders(&easy);
 
     // Reset old options, e.g. headers.
     easy.reset();
 
     println("Redirected headers demo");
-    try iterateRedirectedHeaders(easy);
+    try iterateRedirectedHeaders(&easy);
 }

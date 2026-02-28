@@ -38,7 +38,7 @@ pub fn deinit(self: Self) void {
 
 /// Adds the easy handle to the multi_handle.
 /// https://curl.se/libcurl/c/curl_multi_add_handle.html
-pub fn addHandle(self: Self, easy: Easy) !void {
+pub fn addHandle(self: Self, easy: *Easy) !void {
     try easy.setCommonOpts();
     return checkMCode(c.curl_multi_add_handle(self.multi, easy.handle), self.diagnostics);
 }
