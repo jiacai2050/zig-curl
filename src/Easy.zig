@@ -11,7 +11,7 @@ const Writer = std.Io.Writer;
 const Reader = std.Io.Reader;
 const Allocator = mem.Allocator;
 const checkCode = errors.checkCode;
-pub const Diagnostics = errors.Diagnostics;
+const Diagnostics = errors.Diagnostics;
 const c = util.c;
 const ResizableBuffer = util.ResizableBuffer;
 

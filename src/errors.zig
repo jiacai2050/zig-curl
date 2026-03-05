@@ -51,7 +51,7 @@ pub fn checkCode(code: c.CURLcode, diagnostics: ?*Diagnostics) !void {
     // https://curl.se/libcurl/c/libcurl-errors.html
     std.log.debug("curl err code:{d}, msg:{s}\n", .{ code, c.curl_easy_strerror(code) });
 
-    return error.Unexpected;
+    return error.Curl;
 }
 
 pub fn checkMCode(code: c.CURLMcode, diagnostics: ?*Diagnostics) !void {
@@ -67,5 +67,5 @@ pub fn checkMCode(code: c.CURLMcode, diagnostics: ?*Diagnostics) !void {
         c.curl_multi_strerror(code),
     });
 
-    return error.Unexpected;
+    return error.Curl;
 }
