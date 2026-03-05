@@ -127,13 +127,27 @@ pub fn main() !void {
     println("PUT with custom header demo");
     putWithCustomHeader(allocator, &easy) catch |err| {
         if (easy.diagnostics.error_code) |error_code| {
-            std.log.err("putWithCustomHeader encountered a curl error! error code: {}", .{error_code.code});
+            switch (error_code) {
+                .code => |c| {
+                    std.log.err("putWithCustomHeader encountered a curl error! error code: {}", .{c});
+                },
+                .m_code => |mc| {
+                    std.log.err("putWithCustomHeader encountered a curl multi error! error code: {}", .{mc});
+                },
+            }
         }
         return err;
     };
     postMultiPart(allocator, &easy) catch |err| {
         if (easy.diagnostics.error_code) |error_code| {
-            std.log.err("postMultipart encountered a curl error! error code: {}", .{error_code.code});
+            switch (error_code) {
+                .code => |c| {
+                    std.log.err("postMultipart encountered a curl error! error code: {}", .{c});
+                },
+                .m_code => |mc| {
+                    std.log.err("postMultipart encountered a curl multi error! error code: {}", .{mc});
+                },
+            }
         }
         return err;
     };
