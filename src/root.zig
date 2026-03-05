@@ -25,7 +25,12 @@ pub const libcurl = util.c;
 /// must be called before the program calls any other function in libcurl.
 /// A common place is in the beginning of the program. More see:
 /// https://curl.se/libcurl/c/curl_global_init.html
-pub fn globalInit(diagnostics: ?*Diagnostics) !void {
+pub fn globalInit() !void {
+    try globalInitWithDiagnostics(null);
+}
+
+/// This variant of globalInit allows passing an optional Diagnostics pointer.
+pub fn globalInitWithDiagnostics(diagnostics: ?*Diagnostics) !void {
     try checkCode(libcurl.curl_global_init(libcurl.CURL_GLOBAL_ALL), diagnostics);
 }
 
