@@ -10,7 +10,7 @@ const checkCode = curl.checkCode;
 const Writer = std.io.Writer;
 
 fn newEasy(writer: *Writer, url: [:0]const u8) !Easy {
-    const easy = try Easy.init(.{});
+    var easy = try Easy.init(.{});
     try easy.setUrl(url);
     try easy.setWriter(writer);
     // CURLOPT_PRIVATE allows us to store a pointer to the ctx in the easy handle
@@ -25,7 +25,9 @@ pub fn main() !void {
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const multi = try Multi.init();
+    var diagnostics: Multi.Diagnostics = .{};
+
+    const multi = try Multi.init(&diagnostics);
     defer multi.deinit();
 
     var wtr1 = std.Io.Writer.Allocating.init(allocator);
@@ -33,8 +35,13 @@ pub fn main() !void {
     var wtr2 = std.Io.Writer.Allocating.init(allocator);
     defer wtr2.deinit();
 
-    try multi.addHandle(try newEasy(&wtr1.writer, "http://edgebin.liujiacai.net/headers"));
-    try multi.addHandle(try newEasy(&wtr2.writer, "http://edgebin.liujiacai.net/ip"));
+    var easy1 = try newEasy(&wtr1.writer, "http://edgebin.liujiacai.net/headers");
+    defer easy1.deinit();
+    var easy2 = try newEasy(&wtr2.writer, "http://edgebin.liujiacai.net/ip");
+    defer easy2.deinit();
+
+    try multi.addHandle(&easy1);
+    try multi.addHandle(&easy2);
 
     var keep_running = true;
     while (keep_running) {
@@ -60,16 +67,16 @@ pub fn main() !void {
         }
 
         // check that the request was successful
-        try checkCode(info.msg.data.result);
+        try checkCode(info.msg.data.result, &diagnostics);
 
         // Read the HTTP status code
         var status_code: c_long = 0;
-        try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_RESPONSE_CODE, &status_code));
+        try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_RESPONSE_CODE, &status_code), &diagnostics);
         std.debug.print("Response Code: {any}\n", .{status_code});
 
         // Get the private data (buffer) associated with this handle
         var private_data: ?*anyopaque = null;
-        try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_PRIVATE, &private_data));
+        try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_PRIVATE, &private_data), &diagnostics);
         const writer: *Writer = @ptrCast(@alignCast(private_data.?));
 
         std.debug.print("Response body: {s}\n", .{writer.buffered()});
