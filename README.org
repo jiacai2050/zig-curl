@@ -1,6 +1,6 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2025-10-17T09:10:36+0800
+#+LASTMOD: 2026-03-08T11:50:51+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -60,6 +60,23 @@ pub fn main() !void {
 #+end_src
 
 Check [[file:examples]] for more examples.
+
+** Diagnostics
+When a curl operation fails, it returns a generic =error.Curl=. To get more detailed information, you can use the =diagnostics= field in =Easy= or =Multi=.
+
+#+begin_src zig
+    var easy = try curl.Easy.init(.{ ... });
+    defer easy.deinit();
+
+    easy.perform() catch |err| {
+        if (err == error.Curl) {
+            if (easy.diagnostics.getMessage()) |msg| {
+                std.log.err("curl failed: {s}", .{msg});
+            }
+        }
+        return err;
+    };
+#+end_src
 
 * Documentation
 See https://jiacai2050.github.io/zig-curl/
