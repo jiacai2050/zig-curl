@@ -27,7 +27,10 @@ pub fn main() !void {
 
     var multi = try Multi.init();
     defer multi.deinit() catch |e| {
-        std.debug.print("multi handle deinit failed, err:{any}", .{e});
+        std.debug.print("multi handle deinit failed, err:{any}\n", .{e});
+        if (multi.diagnostics.getMessage()) |msg| {
+            std.debug.print("Diagnostics: {s}\n", .{msg});
+        }
     };
 
     var wtr1 = std.Io.Writer.Allocating.init(allocator);
