@@ -33,7 +33,7 @@ fn iterateRedirectedHeaders(easy: *Easy) !void {
     try easy.setFollowLocation(true);
     const resp = try easy.fetch("https://edgebin.liujiacai.net/redirect/2", .{});
 
-    var diagnostics: Easy.Diagnostics = .{};
+    var diagnostics: curl.Diagnostics = .{};
     const redirects = try resp.getRedirectCount(&diagnostics);
     try std.testing.expectEqual(redirects, 2);
 

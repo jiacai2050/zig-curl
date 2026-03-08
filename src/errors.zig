@@ -39,6 +39,15 @@ pub const Diagnostics = struct {
         /// https://curl.se/libcurl/c/libcurl-errors.html#CURLMcode
         m_code: c.CURLMcode,
     } = null,
+
+    /// Returns a human-readable error message based on the error code.
+    pub fn getMessage(self: Diagnostics) ?[]const u8 {
+        const error_code = self.error_code orelse return null;
+        return switch (error_code) {
+            .code => |code| std.mem.span(c.curl_easy_strerror(code)),
+            .m_code => |m_code| std.mem.span(c.curl_multi_strerror(m_code)),
+        };
+    }
 };
 
 pub fn checkCode(code: c.CURLcode, diagnostics: ?*Diagnostics) !void {
@@ -47,9 +56,6 @@ pub fn checkCode(code: c.CURLcode, diagnostics: ?*Diagnostics) !void {
     }
 
     if (diagnostics) |diag| diag.error_code = .{ .code = code };
-
-    // https://curl.se/libcurl/c/libcurl-errors.html
-    std.log.debug("curl err code:{d}, msg:{s}\n", .{ code, c.curl_easy_strerror(code) });
 
     return error.Curl;
 }
@@ -60,12 +66,6 @@ pub fn checkMCode(code: c.CURLMcode, diagnostics: ?*Diagnostics) !void {
     }
 
     if (diagnostics) |diag| diag.error_code = .{ .m_code = code };
-
-    // https://curl.se/libcurl/c/libcurl-errors.html
-    std.log.debug("curlm err code:{d}, msg:{s}\n", .{
-        code,
-        c.curl_multi_strerror(code),
-    });
 
     return error.Curl;
 }

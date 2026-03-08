@@ -25,10 +25,13 @@ pub fn main() !void {
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    var diagnostics: Multi.Diagnostics = .{};
-
-    const multi = try Multi.init(&diagnostics);
-    defer multi.deinit();
+    var multi = try Multi.init();
+    defer multi.deinit() catch |e| {
+        std.debug.print("multi handle deinit failed, err:{any}\n", .{e});
+        if (multi.diagnostics.getMessage()) |msg| {
+            std.debug.print("Diagnostics: {s}\n", .{msg});
+        }
+    };
 
     var wtr1 = std.Io.Writer.Allocating.init(allocator);
     defer wtr1.deinit();
@@ -67,16 +70,16 @@ pub fn main() !void {
         }
 
         // check that the request was successful
-        try checkCode(info.msg.data.result, &diagnostics);
+        try checkCode(info.msg.data.result, &multi.diagnostics);
 
         // Read the HTTP status code
         var status_code: c_long = 0;
-        try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_RESPONSE_CODE, &status_code), &diagnostics);
+        try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_RESPONSE_CODE, &status_code), &multi.diagnostics);
         std.debug.print("Response Code: {any}\n", .{status_code});
 
         // Get the private data (buffer) associated with this handle
         var private_data: ?*anyopaque = null;
-        try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_PRIVATE, &private_data), &diagnostics);
+        try checkCode(c.curl_easy_getinfo(easy_handle, c.CURLINFO_PRIVATE, &private_data), &multi.diagnostics);
         const writer: *Writer = @ptrCast(@alignCast(private_data.?));
 
         std.debug.print("Response body: {s}\n", .{writer.buffered()});
