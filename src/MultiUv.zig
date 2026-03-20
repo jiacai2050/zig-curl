@@ -29,7 +29,6 @@ const std = @import("std");
 const errors = @import("errors.zig");
 const util = @import("util.zig");
 const Easy = @import("Easy.zig");
-const Multi = @import("Multi.zig");
 
 const c = util.c;
 const c_uv = @cImport({
