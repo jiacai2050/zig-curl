@@ -6,12 +6,16 @@
 //! and manage connections.
 const std = @import("std");
 const util = @import("util.zig");
+const build_info = @import("build_info");
 pub const checkCode = @import("errors.zig").checkCode;
 pub const Diagnostics = @import("errors.zig").Diagnostics;
 
 pub const Easy = @import("Easy.zig");
 pub const Multi = @import("Multi.zig");
 pub const MultiPart = @import("MultiPart.zig");
+/// High-performance libuv-backed multi handle.
+/// Only available when the library is built with `-Dlibuv=true`.
+pub const MultiUv = if (build_info.has_libuv) @import("MultiUv.zig") else void;
 
 pub const printLibcurlVersion = util.printLibcurlVersion;
 pub const hasParseHeaderSupport = util.hasParseHeaderSupport;

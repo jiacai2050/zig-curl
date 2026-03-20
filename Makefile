@@ -14,6 +14,9 @@ run:
 	zig build run-multi -freference-trace $(ARGS)
 	zig build run-header -freference-trace $(ARGS)
 
+run-libuv:
+	zig build run-multi-uv -Dlibuv=true -freference-trace $(ARGS)
+
 fix:
 	zig fmt  .
 
@@ -33,4 +36,4 @@ clean:
 serve:
 	cd server && go run main.go
 
-.PHONY: run fix lint test docs clean serve
+.PHONY: run run-libuv fix lint test docs clean serve
