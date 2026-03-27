@@ -13,6 +13,7 @@ pub fn build(b: *Build) !void {
     const link_vendor = b.option(bool, "link_vendor", "Whether link to vendored libcurl (default: true)") orelse true;
     const sanitize_c = b.option(SanitizeC, "sanitize_c", "Enable compiler sanitizers (default: null)");
     const mbedtls_pthreads = b.option(bool, "mbedtls_pthreads", "Enable mbedtls pthread support (default: false)") orelse false;
+    const libuv = b.option(bool, "libuv", "Enable libuv integration for MultiUv (requires libuv dev headers, default: false)") orelse false;
 
     const module = b.addModule(MODULE_NAME, .{
         .root_source_file = b.path("src/root.zig"),
@@ -25,7 +26,12 @@ pub fn build(b: *Build) !void {
 
     const opt = b.addOptions();
     opt.addOption([]const u8, "version", manifest.version);
+    opt.addOption(bool, "has_libuv", libuv);
     module.addImport("build_info", opt.createModule());
+
+    if (libuv) {
+        module.linkSystemLibrary("uv", .{});
+    }
 
     var libcurl: ?*Step.Compile = null;
     if (link_vendor) {
@@ -41,6 +47,10 @@ pub fn build(b: *Build) !void {
         try addExample(b, name, module, libcurl, target, optimize);
     }
 
+    if (libuv) {
+        try addLibuvExample(b, module, libcurl, target, optimize);
+    }
+
     const main_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/root.zig"),
@@ -49,11 +59,16 @@ pub fn build(b: *Build) !void {
             .optimize = optimize,
         }),
     });
+    main_tests.root_module.addImport("build_info", opt.createModule());
 
     if (libcurl) |lib| {
         main_tests.linkLibrary(lib);
     } else {
         main_tests.linkSystemLibrary("curl");
+    }
+
+    if (libuv) {
+        main_tests.linkSystemLibrary("uv");
     }
 
     const run_main_tests = b.addRunArtifact(main_tests);
@@ -85,6 +100,21 @@ pub fn build(b: *Build) !void {
         });
 
         check_exe.root_module.addImport(MODULE_NAME, module);
+        check_step.dependOn(&check_exe.step);
+    }
+
+    if (libuv) {
+        const check_exe = b.addExecutable(.{
+            .name = "check-multi-uv",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("examples/multi_uv.zig"),
+                .link_libc = true,
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+        check_exe.root_module.addImport(MODULE_NAME, module);
+        check_exe.linkSystemLibrary("uv");
         check_step.dependOn(&check_exe.step);
     }
 }
@@ -139,6 +169,36 @@ fn addExample(
         "run-" ++ name,
         std.fmt.comptimePrint("Run {s} example", .{name}),
     );
+    run_step.dependOn(&b.addRunArtifact(exe).step);
+}
+
+fn addLibuvExample(
+    b: *Build,
+    curl_module: *Module,
+    libcurl: ?*Step.Compile,
+    target: Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) !void {
+    const exe = b.addExecutable(.{
+        .name = "multi-uv",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/multi_uv.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    b.installArtifact(exe);
+
+    exe.root_module.addImport(MODULE_NAME, curl_module);
+    if (libcurl) |lib| {
+        exe.linkLibrary(lib);
+    } else {
+        exe.linkSystemLibrary("curl");
+    }
+    exe.linkSystemLibrary("uv");
+
+    const run_step = b.step("run-multi-uv", "Run multi-uv example (requires -Dlibuv=true)");
     run_step.dependOn(&b.addRunArtifact(exe).step);
 }
 
