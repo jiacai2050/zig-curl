@@ -1,15 +1,17 @@
 const std = @import("std");
 
 pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sanitize_c: ?std.zig.SanitizeC) ?*std.Build.Step.Compile {
+    const module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .sanitize_c = sanitize_c,
+    });
+
     const lib = b.addLibrary(.{
         .linkage = .static,
         .name = "z",
-        .root_module = b.createModule(.{
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-            .sanitize_c = sanitize_c,
-        }),
+        .root_module = module,
     });
     const zlib_dep = b.lazyDependency("zlib", .{
         .target = target,
@@ -17,7 +19,7 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     }) orelse return null;
 
     inline for (srcs) |s| {
-        lib.addCSourceFile(.{
+        module.addCSourceFile(.{
             .file = zlib_dep.path(s),
             .flags = &.{"-std=c89"},
         });

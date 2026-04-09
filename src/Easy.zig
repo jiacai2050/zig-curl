@@ -484,7 +484,7 @@ pub fn discardWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_d
 /// A write callback that writes the response body to stdout.
 pub fn stdoutWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
     _ = user_data;
-    const stdout = std.fs.File.stdout();
+    const stdout = std.Io.File.stdout();
     var writer = stdout.writer(&.{}); // empty buffer means unbuffered
     const real_size = size * nmemb;
     const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];

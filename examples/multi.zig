@@ -7,7 +7,7 @@ const Easy = curl.Easy;
 const Multi = curl.Multi;
 const c = curl.libcurl;
 const checkCode = curl.checkCode;
-const Writer = std.io.Writer;
+const Writer = std.Io.Writer;
 
 fn newEasy(writer: *Writer, url: [:0]const u8) !Easy {
     var easy = try Easy.init(.{});

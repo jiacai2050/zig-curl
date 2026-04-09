@@ -51,9 +51,9 @@ pub fn build(b: *Build) !void {
     });
 
     if (libcurl) |lib| {
-        main_tests.linkLibrary(lib);
+        main_tests.root_module.linkLibrary(lib);
     } else {
-        main_tests.linkSystemLibrary("curl");
+        main_tests.root_module.linkSystemLibrary("curl", .{});
     }
 
     const run_main_tests = b.addRunArtifact(main_tests);
@@ -104,8 +104,8 @@ fn buildLibcurl(
     }
 
     const libcurl = curl.?;
-    libcurl.linkLibrary(tls.?);
-    libcurl.linkLibrary(zlib.?);
+    libcurl.root_module.linkLibrary(tls.?);
+    libcurl.root_module.linkLibrary(zlib.?);
     return libcurl;
 }
 
@@ -130,9 +130,9 @@ fn addExample(
 
     exe.root_module.addImport(MODULE_NAME, curl_module);
     if (libcurl) |lib| {
-        exe.linkLibrary(lib);
+        exe.root_module.linkLibrary(lib);
     } else {
-        exe.linkSystemLibrary("curl");
+        exe.root_module.linkSystemLibrary("curl", .{});
     }
 
     const run_step = b.step(
@@ -154,7 +154,7 @@ fn parseManifest(b: *Build) !Manifest {
     const input = @embedFile("build.zig.zon");
     var diagnostics: std.zon.parse.Diagnostics = .{};
     defer diagnostics.deinit(b.allocator);
-    const parsed = std.zon.parse.fromSlice(
+    const parsed = std.zon.parse.fromSliceAlloc(
         Manifest,
         b.allocator,
         input,
