@@ -341,7 +341,8 @@ pub fn setWritedata(self: *Self, data: *anyopaque) !void {
 /// The function should return the number of bytes written, or 0 to indicate an error.
 /// There are two write functions provided by this library:
 /// 1. `discardWriteCallback` - does nothing, used when you don't care about the response body.
-/// 2. `stdoutWriteCallback` - writes the response body to stdout.
+/// 2. `stdoutWriteCallback` - writes the response body to stdout; requires
+///    `setWritedata` to be called with a `*const std.Io`.
 ///
 /// https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION.html
 pub fn setWritefunction(
@@ -482,15 +483,12 @@ pub fn discardWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_d
 }
 
 /// A write callback that writes the response body to stdout.
+/// `user_data` must be a `*const std.Io` (pass via `setWritedata`).
 pub fn stdoutWriteCallback(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
-    _ = user_data;
-    const stdout = std.fs.File.stdout();
-    var writer = stdout.writer(&.{}); // empty buffer means unbuffered
+    const io: *const std.Io = @ptrCast(@alignCast(user_data));
     const real_size = size * nmemb;
     const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];
-    writer.writeAll(data) catch {
-        return 0;
-    };
+    std.Io.File.stdout().writeStreamingAll(io.*, data) catch return 0;
     return real_size;
 }
 

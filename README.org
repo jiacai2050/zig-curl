@@ -31,12 +31,12 @@ const curl = @import("curl");
 
 const URL = "https://edgebin.liujiacai.net/anything";
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const ca_bundle = try curl.allocCABundle(allocator);
+    const ca_bundle = try curl.allocCABundle(allocator, init.io);
     defer ca_bundle.deinit();
     var easy = try curl.Easy.init(.{
         .ca_bundle = ca_bundle,
@@ -92,14 +92,14 @@ After fetch, import =curl= like this in your =build.zig=:
 #+begin_src zig
 const dep_curl = b.dependency("curl", .{});
 exe.root_module.addImport("curl", dep_curl.module("curl"));
-exe.linkLibC();
+exe.root_module.link_libc = true;
 #+end_src
 
 This library will link to a vendored libcurl by default, you can disable it and link to system-wide with this
 #+begin_src zig
 const dep_curl = b.dependency("curl", .{ .link_vendor = false });
-exe.linkSystemLibrary("curl");
-exe.linkLibC();
+exe.root_module.linkSystemLibrary("curl", .{});
+exe.root_module.link_libc = true;
 #+end_src
 
 * License

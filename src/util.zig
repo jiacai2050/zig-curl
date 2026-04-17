@@ -93,12 +93,12 @@ test "url encode" {
 const CERT_MARKER_BEGIN = "-----BEGIN CERTIFICATE-----";
 const CERT_MARKER_END = "\n-----END CERTIFICATE-----\n";
 
-pub fn allocCABundle(allocator: std.mem.Allocator) !ResizableBuffer {
-    var bundle: std.crypto.Certificate.Bundle = .{};
+pub fn allocCABundle(allocator: std.mem.Allocator, io: std.Io) !ResizableBuffer {
+    var bundle: std.crypto.Certificate.Bundle = .empty;
     defer bundle.deinit(allocator);
 
     var blob = ResizableBuffer.init(allocator);
-    try bundle.rescan(allocator);
+    try bundle.rescan(allocator, io, .now(io, .real));
     var iter = bundle.map.iterator();
     while (iter.next()) |entry| {
         const der = try std.crypto.Certificate.der.Element.parse(bundle.bytes.items, entry.value_ptr.*);

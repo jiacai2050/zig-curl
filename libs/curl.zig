@@ -1,15 +1,17 @@
 const std = @import("std");
 
 pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sanitize_c: ?std.zig.SanitizeC, mbedtls_pthreads: bool) ?*std.Build.Step.Compile {
+    const module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .sanitize_c = sanitize_c,
+    });
+
     const lib = b.addLibrary(.{
         .linkage = .static,
         .name = "curl",
-        .root_module = b.createModule(.{
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-            .sanitize_c = sanitize_c,
-        }),
+        .root_module = module,
     });
     const curl_dep = b.lazyDependency("curl", .{
         .target = target,
@@ -17,13 +19,13 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     }) orelse return null;
 
     inline for (srcs) |s| {
-        lib.addCSourceFile(.{
+        module.addCSourceFile(.{
             .file = curl_dep.path(s),
             .flags = &.{"-std=gnu89"},
         });
     }
-    lib.addIncludePath(curl_dep.path("lib"));
-    lib.addIncludePath(curl_dep.path("include"));
+    module.addIncludePath(curl_dep.path("lib"));
+    module.addIncludePath(curl_dep.path("include"));
     lib.installHeadersDirectory(curl_dep.path("include/curl"), "curl", .{});
     lib.root_module.addCMacro("BUILDING_LIBCURL", "1");
     lib.root_module.addCMacro("CURL_STATICLIB", "1");
@@ -49,7 +51,7 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     lib.root_module.addCMacro("HAVE_LIBZ", "1");
     lib.root_module.addCMacro("HAVE_ZLIB_H", "1");
     if (target.result.os.tag == .windows) {
-        lib.linkSystemLibrary("bcrypt");
+        module.linkSystemLibrary("bcrypt", .{});
         return lib;
     }
     lib.root_module.addCMacro("CURL_EXTERN_SYMBOL", "__attribute__ ((__visibility__ (\"default\"))");

@@ -5,13 +5,13 @@ const Allocator = std.mem.Allocator;
 
 const URL = "https://edgebin.liujiacai.net/anything";
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     println("Upload demo");
     var gpa = std.heap.DebugAllocator(.{}){};
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const ca_bundle = try curl.allocCABundle(allocator);
+    const ca_bundle = try curl.allocCABundle(allocator, init.io);
     defer ca_bundle.deinit();
     var easy = try curl.Easy.init(.{
         .ca_bundle = ca_bundle,
@@ -22,11 +22,11 @@ pub fn main() !void {
     var writer = std.Io.Writer.Allocating.init(allocator);
     defer writer.deinit();
 
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(init.io, path, .{});
+    defer file.close(init.io);
 
     var buf: [4096]u8 = undefined;
-    var reader = file.reader(&buf);
+    var reader = file.reader(init.io, &buf);
     const resp = try easy.upload(URL, &reader.interface, &writer.writer);
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{

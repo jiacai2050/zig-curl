@@ -1,12 +1,12 @@
 const std = @import("std");
 const curl = @import("curl");
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const ca_bundle = try curl.allocCABundle(allocator);
+    const ca_bundle = try curl.allocCABundle(allocator, init.io);
     defer ca_bundle.deinit();
     var easy = try curl.Easy.init(.{
         .ca_bundle = ca_bundle,

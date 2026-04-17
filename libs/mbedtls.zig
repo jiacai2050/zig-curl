@@ -18,11 +18,11 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         .optimize = optimize,
     }) orelse return null;
     inline for (srcs) |s| {
-        lib.addCSourceFile(.{ .file = mbedtls_dep.path(s), .flags = &.{"-std=c99"} });
+        lib.root_module.addCSourceFile(.{ .file = mbedtls_dep.path(s), .flags = &.{"-std=c99"} });
     }
 
-    lib.addIncludePath(mbedtls_dep.path("include"));
-    lib.addIncludePath(mbedtls_dep.path("library"));
+    lib.root_module.addIncludePath(mbedtls_dep.path("include"));
+    lib.root_module.addIncludePath(mbedtls_dep.path("library"));
     lib.installHeadersDirectory(mbedtls_dep.path("include/mbedtls"), "mbedtls", .{});
     lib.installHeadersDirectory(mbedtls_dep.path("include/psa"), "psa", .{});
     if (enable_pthreads) {
@@ -31,7 +31,7 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     }
 
     if (target.result.os.tag == .windows) {
-        lib.linkSystemLibrary("ws2_32");
+        lib.root_module.linkSystemLibrary("ws2_32", .{});
     }
     return lib;
 }
