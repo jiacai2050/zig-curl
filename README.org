@@ -98,7 +98,7 @@ exe.root_module.link_libc = true;
 This library will link to a vendored libcurl by default, you can disable it and link to system-wide with this
 #+begin_src zig
 const dep_curl = b.dependency("curl", .{ .link_vendor = false });
-exe.linkSystemLibrary("curl",.{});
+exe.root_module.linkSystemLibrary("curl", .{});
 exe.root_module.link_libc = true;
 #+end_src
 
