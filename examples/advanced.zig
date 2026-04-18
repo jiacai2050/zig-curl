@@ -7,6 +7,60 @@ const Easy = curl.Easy;
 
 const UA = "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0";
 
+pub fn main(init: std.process.Init) !void {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer if (gpa.deinit() != .ok) @panic("leak");
+    const allocator = gpa.allocator();
+
+    var ca_bundle = try curl.allocCABundle(allocator, init.io);
+    defer ca_bundle.deinit(allocator);
+
+    var easy = try Easy.init(.{
+        .ca_bundle = ca_bundle,
+    });
+    defer easy.deinit();
+
+    println("PUT with custom header demo");
+    putWithCustomHeader(allocator, &easy) catch |err| {
+        if (easy.diagnostics.error_code) |error_code| {
+            switch (error_code) {
+                .code => |curl_code| {
+                    std.log.err(
+                        "putWithCustomHeader encountered a curl error! error code: {}",
+                        .{curl_code},
+                    );
+                },
+                .m_code => |curl_multi_code| {
+                    std.log.err(
+                        "putWithCustomHeader encountered a curl multi error! error code: {}",
+                        .{curl_multi_code},
+                    );
+                },
+            }
+        }
+        return err;
+    };
+    postMultiPart(allocator, &easy) catch |err| {
+        if (easy.diagnostics.error_code) |error_code| {
+            switch (error_code) {
+                .code => |curl_code| {
+                    std.log.err(
+                        "postMultipart encountered a curl error! error code: {}",
+                        .{curl_code},
+                    );
+                },
+                .m_code => |curl_multi_code| {
+                    std.log.err(
+                        "postMultipart encountered a curl multi error! error code: {}",
+                        .{curl_multi_code},
+                    );
+                },
+            }
+        }
+        return err;
+    };
+}
+
 const Response = struct {
     headers: struct {
         @"user-agent": []const u8,
@@ -26,12 +80,12 @@ fn putWithCustomHeader(allocator: Allocator, easy: *Easy) !void {
     ;
 
     const headers = blk: {
-        var h: Easy.Headers = .{};
-        errdefer h.deinit();
-        try h.add("content-type: application/json");
-        try h.add(std.fmt.comptimePrint("user-agent: {s}", .{UA}));
-        try h.add("Authorization: Basic YWxhZGRpbjpvcGVuc2VzYW1l");
-        break :blk h;
+        var headers_builder: Easy.Headers = .{};
+        errdefer headers_builder.deinit();
+        try headers_builder.add("content-type: application/json");
+        try headers_builder.add(std.fmt.comptimePrint("user-agent: {s}", .{UA}));
+        try headers_builder.add("Authorization: Basic YWxhZGRpbjpvcGVuc2VzYW1l");
+        break :blk headers_builder;
     };
     defer headers.deinit();
 
@@ -45,9 +99,9 @@ fn putWithCustomHeader(allocator: Allocator, easy: *Easy) !void {
     defer writer.deinit();
     try easy.setWriter(&writer.writer);
 
-    const resp = try easy.perform();
+    const response = try easy.perform();
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
-        resp.status_code,
+        response.status_code,
         writer.writer.buffered(),
     });
 
@@ -76,12 +130,12 @@ fn putWithCustomHeader(allocator: Allocator, easy: *Easy) !void {
     );
 
     // Get response header `date`.
-    const date_header = resp.getHeader("date") catch |err| {
+    const date_header = response.getHeader("date") catch |err| {
         std.debug.print("Get header error: {any}\n", .{err});
         return;
     };
-    if (date_header) |h| {
-        std.debug.print("date header: {s}\n", .{h.get()});
+    if (date_header) |header| {
+        std.debug.print("date header: {s}\n", .{header.get()});
     } else {
         std.debug.print("date header not found\n", .{});
     }
@@ -107,48 +161,9 @@ fn postMultiPart(allocator: Allocator, easy: *Easy) !void {
 
     try easy.setWriter(&writer.writer);
 
-    const resp = try easy.perform();
-    std.debug.print("code: {d}, resp:{s}\n", .{ resp.status_code, writer.writer.buffered() });
-}
-
-pub fn main(init: std.process.Init) !void {
-    var gpa = std.heap.DebugAllocator(.{}){};
-    defer if (gpa.deinit() != .ok) @panic("leak");
-    const allocator = gpa.allocator();
-
-    const ca_bundle = try curl.allocCABundle(allocator, init.io);
-    defer ca_bundle.deinit();
-
-    var easy = try Easy.init(.{
-        .ca_bundle = ca_bundle,
+    const response = try easy.perform();
+    std.debug.print("code: {d}, response:{s}\n", .{
+        response.status_code,
+        writer.writer.buffered(),
     });
-    defer easy.deinit();
-
-    println("PUT with custom header demo");
-    putWithCustomHeader(allocator, &easy) catch |err| {
-        if (easy.diagnostics.error_code) |error_code| {
-            switch (error_code) {
-                .code => |c| {
-                    std.log.err("putWithCustomHeader encountered a curl error! error code: {}", .{c});
-                },
-                .m_code => |mc| {
-                    std.log.err("putWithCustomHeader encountered a curl multi error! error code: {}", .{mc});
-                },
-            }
-        }
-        return err;
-    };
-    postMultiPart(allocator, &easy) catch |err| {
-        if (easy.diagnostics.error_code) |error_code| {
-            switch (error_code) {
-                .code => |c| {
-                    std.log.err("postMultipart encountered a curl error! error code: {}", .{c});
-                },
-                .m_code => |mc| {
-                    std.log.err("postMultipart encountered a curl multi error! error code: {}", .{mc});
-                },
-            }
-        }
-        return err;
-    };
 }

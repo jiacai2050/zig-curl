@@ -3,68 +3,13 @@ const curl = @import("curl");
 const Easy = curl.Easy;
 const println = @import("util.zig").println;
 
-fn iterateHeaders(easy: *Easy) !void {
-    // Reset old options, e.g. headers.
-    easy.reset();
-
-    const resp = try easy.fetch("https://edgebin.liujiacai.net/response-headers?X-Foo=1&X-Foo=2&X-Foo=3", .{});
-
-    std.debug.print("Iterating all headers...\n", .{});
-    {
-        var iter = try resp.iterateHeaders(.{});
-        while (try iter.next()) |header| {
-            std.debug.print("  {s}: {s}\n", .{ header.name, header.get() });
-        }
-    }
-
-    // Iterating X-Foo only
-    {
-        var iter = try resp.iterateHeaders(.{ .name = "X-Foo" });
-        const expected_values = .{ "1", "2", "3" };
-        inline for (expected_values) |expected| {
-            const header = try iter.next() orelse unreachable;
-            try std.testing.expectEqualStrings(header.get(), expected);
-        }
-        try std.testing.expect((try iter.next()) == null);
-    }
-}
-
-fn iterateRedirectedHeaders(easy: *Easy) !void {
-    try easy.setFollowLocation(true);
-    const resp = try easy.fetch("https://edgebin.liujiacai.net/redirect/2", .{});
-
-    var diagnostics: curl.Diagnostics = .{};
-    const redirects = try resp.getRedirectCount(&diagnostics);
-    try std.testing.expectEqual(redirects, 2);
-
-    for (0..redirects + 1) |i| {
-        std.debug.print("Request #{} headers:\n", .{i});
-        var iter = try resp.iterateHeaders(.{ .request = i });
-        while (try iter.next()) |header| {
-            std.debug.print("  {s}: {s}\n", .{ header.name, header.get() });
-        }
-    }
-
-    // Iterating content-type only
-    const expected_values = [_][]const u8{ "/redirect/1", "/get" };
-    var count: usize = 0;
-    for (0..redirects + 1) |i| {
-        var iter = try resp.iterateHeaders(.{ .request = i, .name = "Location" });
-        while (try iter.next()) |header| {
-            try std.testing.expectEqualStrings(header.get(), expected_values[count]);
-            count += 1;
-        }
-    }
-    try std.testing.expectEqual(count, 2);
-}
-
 pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const ca_bundle = try curl.allocCABundle(allocator, init.io);
-    defer ca_bundle.deinit();
+    var ca_bundle = try curl.allocCABundle(allocator, init.io);
+    defer ca_bundle.deinit(allocator);
     var easy = try Easy.init(.{ .ca_bundle = ca_bundle });
     defer easy.deinit();
 
@@ -81,4 +26,62 @@ pub fn main(init: std.process.Init) !void {
 
     println("Redirected headers demo");
     try iterateRedirectedHeaders(&easy);
+}
+
+fn iterateHeaders(easy: *Easy) !void {
+    // Reset old options, e.g. headers.
+    easy.reset();
+
+    const response = try easy.fetch(
+        "https://edgebin.liujiacai.net/response-headers?X-Foo=1&X-Foo=2&X-Foo=3",
+        .{},
+    );
+
+    std.debug.print("Iterating all headers...\n", .{});
+    {
+        var iter = try response.iterateHeaders(.{});
+        while (try iter.next()) |header| {
+            std.debug.print("  {s}: {s}\n", .{ header.name, header.get() });
+        }
+    }
+
+    // Iterating X-Foo only
+    {
+        var iter = try response.iterateHeaders(.{ .name = "X-Foo" });
+        const expected_values = .{ "1", "2", "3" };
+        inline for (expected_values) |expected| {
+            const header = try iter.next() orelse unreachable;
+            try std.testing.expectEqualStrings(header.get(), expected);
+        }
+        try std.testing.expect((try iter.next()) == null);
+    }
+}
+
+fn iterateRedirectedHeaders(easy: *Easy) !void {
+    try easy.setFollowLocation(true);
+    const response = try easy.fetch("https://edgebin.liujiacai.net/redirect/2", .{});
+
+    var diagnostics: curl.Diagnostics = .{};
+    const redirects = try response.getRedirectCount(&diagnostics);
+    try std.testing.expectEqual(redirects, 2);
+
+    for (0..redirects + 1) |i| {
+        std.debug.print("Request #{} headers:\n", .{i});
+        var iter = try response.iterateHeaders(.{ .request = i });
+        while (try iter.next()) |header| {
+            std.debug.print("  {s}: {s}\n", .{ header.name, header.get() });
+        }
+    }
+
+    // Iterating content-type only
+    const expected_values = [_][]const u8{ "/redirect/1", "/get" };
+    var count: usize = 0;
+    for (0..redirects + 1) |i| {
+        var iter = try response.iterateHeaders(.{ .request = i, .name = "Location" });
+        while (try iter.next()) |header| {
+            try std.testing.expectEqualStrings(header.get(), expected_values[count]);
+            count += 1;
+        }
+    }
+    try std.testing.expectEqual(count, 2);
 }

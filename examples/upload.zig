@@ -11,8 +11,8 @@ pub fn main(init: std.process.Init) !void {
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const ca_bundle = try curl.allocCABundle(allocator, init.io);
-    defer ca_bundle.deinit();
+    var ca_bundle = try curl.allocCABundle(allocator, init.io);
+    defer ca_bundle.deinit(allocator);
     var easy = try curl.Easy.init(.{
         .ca_bundle = ca_bundle,
     });
@@ -27,10 +27,10 @@ pub fn main(init: std.process.Init) !void {
 
     var buf: [4096]u8 = undefined;
     var reader = file.reader(init.io, &buf);
-    const resp = try easy.upload(URL, &reader.interface, &writer.writer);
+    const response = try easy.upload(URL, &reader.interface, &writer.writer);
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
-        resp.status_code,
+        response.status_code,
         writer.writer.buffered(),
     });
 
@@ -66,6 +66,9 @@ fn multipartUpload(allocator: Allocator, easy: *curl.Easy) !void {
 
     try easy.setWriter(&writer.writer);
     try easy.setMultiPart(multi_part);
-    const r2 = try easy.perform();
-    std.debug.print("Status code: {d}\n{s}", .{ r2.status_code, writer.writer.buffered() });
+    const multipart_response = try easy.perform();
+    std.debug.print("Status code: {d}\n{s}", .{
+        multipart_response.status_code,
+        writer.writer.buffered(),
+    });
 }

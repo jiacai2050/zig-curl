@@ -1,16 +1,19 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2026-03-08T11:50:51+0800
+#+LASTMOD: 2026-04-18T13:08:05+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
-[[https://img.shields.io/badge/zig%20version-0.15.2-blue.svg]]
+[[https://img.shields.io/badge/zig%20version-0.16.0-blue.svg]]
 [[https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml][https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml/badge.svg]]
 [[https://ci.codeberg.org/repos/13257][https://ci.codeberg.org/api/badges/13257/status.svg]]
 
 #+html: <p align="center"><img src="docs/logo.svg" width="35%"/></p>
 
 Zig bindings for [[https://curl.haxx.se/libcurl/][libcurl]], a free and easy-to-use client-side URL transfer library.
+
+This package targets Zig =0.16.0+=.
+For Zig =0.15=, use the [[https://github.com/jiacai2050/zig-curl/tree/0.15][0.15 branch]].
 
 The vendored libraries consist of:
 | Library | Version |
@@ -36,8 +39,8 @@ pub fn main(init: std.process.Init) !void {
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const ca_bundle = try curl.allocCABundle(allocator, init.io);
-    defer ca_bundle.deinit();
+    var ca_bundle = try curl.allocCABundle(allocator, init.io);
+    defer ca_bundle.deinit(allocator);
     var easy = try curl.Easy.init(.{
         .ca_bundle = ca_bundle,
     });
@@ -78,12 +81,15 @@ When a curl operation fails, it returns a generic =error.Curl=. To get more deta
     };
 #+end_src
 
-* Documentation
+** Documentation
 See https://jiacai2050.github.io/zig-curl/
 
-* Installation
+** Installation
 #+begin_src bash
-zig fetch --save=curl https://github.com/jiacai2050/zig-curl/archive/refs/tags/${TAG}.zip
+# Latest version
+zig fetch --save git+https://github.com/jiacai2050/zig-curl.git
+# Tagged version
+zig fetch --save git+https://github.com/jiacai2050/zig-curl.git#v0.5.0
 #+end_src
 
 The latest tag can be found on [[https://github.com/jiacai2050/zig-curl/releases/][release page]].

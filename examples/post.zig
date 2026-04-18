@@ -6,8 +6,8 @@ pub fn main(init: std.process.Init) !void {
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 
-    const ca_bundle = try curl.allocCABundle(allocator, init.io);
-    defer ca_bundle.deinit();
+    var ca_bundle = try curl.allocCABundle(allocator, init.io);
+    defer ca_bundle.deinit(allocator);
     var easy = try curl.Easy.init(.{
         .ca_bundle = ca_bundle,
     });
@@ -19,7 +19,7 @@ pub fn main(init: std.process.Init) !void {
 
     var writer = std.Io.Writer.Allocating.init(allocator);
     defer writer.deinit();
-    const resp = try easy.fetch(
+    const response = try easy.fetch(
         "https://edgebin.liujiacai.net/anything",
         .{
             .method = .POST,
@@ -32,7 +32,7 @@ pub fn main(init: std.process.Init) !void {
     );
 
     std.debug.print("Status code: {d}\nBody: {s}\n", .{
-        resp.status_code,
+        response.status_code,
         writer.writer.buffered(),
     });
 }

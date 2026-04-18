@@ -1,10 +1,8 @@
 const std = @import("std");
-pub const c = @cImport({
-    @cInclude("curl/curl.h");
-});
+pub const c = @import("c");
 const Allocator = std.mem.Allocator;
 const Encoder = std.base64.standard.Encoder;
-pub const ResizableBuffer = std.array_list.Managed(u8);
+pub const ResizableBuffer = std.ArrayList(u8);
 
 pub fn encode_base64(allocator: Allocator, input: []const u8) ![]const u8 {
     const encoded_len = Encoder.calcSize(input.len);
@@ -97,7 +95,7 @@ pub fn allocCABundle(allocator: std.mem.Allocator, io: std.Io) !ResizableBuffer 
     var bundle: std.crypto.Certificate.Bundle = .empty;
     defer bundle.deinit(allocator);
 
-    var blob = ResizableBuffer.init(allocator);
+    var blob: ResizableBuffer = .empty;
     try bundle.rescan(allocator, io, .now(io, .real));
     var iter = bundle.map.iterator();
     while (iter.next()) |entry| {
@@ -106,13 +104,16 @@ pub fn allocCABundle(allocator: std.mem.Allocator, io: std.Io) !ResizableBuffer 
         const encoded = try encode_base64(allocator, cert);
         defer allocator.free(encoded);
 
-        try blob.ensureUnusedCapacity(CERT_MARKER_BEGIN.len + CERT_MARKER_END.len + encoded.len);
-        try blob.appendSlice(CERT_MARKER_BEGIN);
+        try blob.ensureUnusedCapacity(
+            allocator,
+            CERT_MARKER_BEGIN.len + CERT_MARKER_END.len + encoded.len,
+        );
+        try blob.appendSlice(allocator, CERT_MARKER_BEGIN);
         for (encoded, 0..) |char, n| {
-            if (n % 64 == 0) try blob.append('\n');
-            try blob.append(char);
+            if (n % 64 == 0) try blob.append(allocator, '\n');
+            try blob.append(allocator, char);
         }
-        try blob.appendSlice(CERT_MARKER_END);
+        try blob.appendSlice(allocator, CERT_MARKER_END);
     }
 
     return blob;

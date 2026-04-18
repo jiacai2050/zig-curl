@@ -13,6 +13,13 @@ pub fn build(b: *Build) !void {
     const link_vendor = b.option(bool, "link_vendor", "Whether link to vendored libcurl (default: true)") orelse true;
     const sanitize_c = b.option(SanitizeC, "sanitize_c", "Enable compiler sanitizers (default: null)");
     const mbedtls_pthreads = b.option(bool, "mbedtls_pthreads", "Enable mbedtls pthread support (default: false)") orelse false;
+    const manifest = try parseManifest(b);
+    defer manifest.deinit(b.allocator);
+
+    const opt = b.addOptions();
+    opt.addOption([]const u8, "version", manifest.version);
+    const build_info_module = opt.createModule();
+    const c_module = createCBindingsModule(b, target, optimize, link_vendor) orelse return;
 
     const module = b.addModule(MODULE_NAME, .{
         .root_source_file = b.path("src/root.zig"),
@@ -20,12 +27,7 @@ pub fn build(b: *Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    const manifest = try parseManifest(b);
-    defer manifest.deinit(b.allocator);
-
-    const opt = b.addOptions();
-    opt.addOption([]const u8, "version", manifest.version);
-    module.addImport("build_info", opt.createModule());
+    addSharedImports(module, build_info_module, c_module);
 
     var libcurl: ?*Step.Compile = null;
     if (link_vendor) {
@@ -49,6 +51,7 @@ pub fn build(b: *Build) !void {
             .optimize = optimize,
         }),
     });
+    addSharedImports(main_tests.root_module, build_info_module, c_module);
 
     if (libcurl) |lib| {
         main_tests.root_module.linkLibrary(lib);
@@ -107,6 +110,36 @@ fn buildLibcurl(
     libcurl.root_module.linkLibrary(tls.?);
     libcurl.root_module.linkLibrary(zlib.?);
     return libcurl;
+}
+
+fn createCBindingsModule(
+    b: *Build,
+    target: Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    link_vendor: bool,
+) ?*Module {
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    if (link_vendor) {
+        const curl_dep = b.lazyDependency("curl", .{
+            .target = target,
+            .optimize = optimize,
+        }) orelse return null;
+        translate_c.addIncludePath(curl_dep.path("include"));
+    } else {
+        translate_c.linkSystemLibrary("curl", .{});
+    }
+
+    return translate_c.createModule();
+}
+
+fn addSharedImports(module: *Module, build_info_module: *Module, c_module: *Module) void {
+    module.addImport("build_info", build_info_module);
+    module.addImport("c", c_module);
 }
 
 fn addExample(

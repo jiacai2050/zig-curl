@@ -396,8 +396,11 @@ pub const IpResolve = enum(c_int) {
     v6 = c.CURL_IPRESOLVE_V6,
 };
 
-pub fn setIpResolve(self: *Self, ipr: IpResolve) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_IPRESOLVE, @intFromEnum(ipr)), &self.diagnostics);
+pub fn setIpResolve(self: *Self, ip_resolve: IpResolve) !void {
+    try checkCode(
+        c.curl_easy_setopt(self.handle, c.CURLOPT_IPRESOLVE, @intFromEnum(ip_resolve)),
+        &self.diagnostics,
+    );
 }
 
 pub fn setInsecure(self: *Self, enable: bool) !void {
@@ -454,9 +457,9 @@ pub fn fetch(
 
     if (options.writer) |writer| {
         try self.setWriter(writer);
-        const resp = try self.perform();
+        const response = try self.perform();
         try writer.flush();
-        return resp;
+        return response;
     }
 
     return try self.perform();
@@ -465,14 +468,14 @@ pub fn fetch(
 /// Upload issues a PUT request to upload file.
 /// `writeContext` is the same as in `fetch`, used to write the response body.
 pub fn upload(self: *Self, url: [:0]const u8, reader: *Reader, writer: *Writer) !Response {
-    var up = try Upload.init(reader);
-    try self.setUpload(&up);
+    var upload_context = try Upload.init(reader);
+    try self.setUpload(&upload_context);
 
     try self.setUrl(url);
     try self.setWriter(writer);
-    const resp = try self.perform();
+    const response = try self.perform();
     try writer.flush();
-    return resp;
+    return response;
 }
 
 /// A write callback that does nothing, used when you don't care about the response body.

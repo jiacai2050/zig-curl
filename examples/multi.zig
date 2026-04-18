@@ -20,31 +20,29 @@ fn newEasy(writer: *Writer, url: [:0]const u8) !Easy {
     return easy;
 }
 
-pub fn main() !void {
-    var gpa = std.heap.DebugAllocator(.{}){};
-    defer if (gpa.deinit() != .ok) @panic("leak");
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     var multi = try Multi.init();
     defer multi.deinit() catch |e| {
         std.debug.print("multi handle deinit failed, err:{any}\n", .{e});
-        if (multi.diagnostics.getMessage()) |msg| {
-            std.debug.print("Diagnostics: {s}\n", .{msg});
+        if (multi.diagnostics.getMessage()) |message| {
+            std.debug.print("Diagnostics: {s}\n", .{message});
         }
     };
 
-    var wtr1 = std.Io.Writer.Allocating.init(allocator);
-    defer wtr1.deinit();
-    var wtr2 = std.Io.Writer.Allocating.init(allocator);
-    defer wtr2.deinit();
+    var headers_writer = std.Io.Writer.Allocating.init(allocator);
+    defer headers_writer.deinit();
+    var ip_writer = std.Io.Writer.Allocating.init(allocator);
+    defer ip_writer.deinit();
 
-    var easy1 = try newEasy(&wtr1.writer, "http://edgebin.liujiacai.net/headers");
-    defer easy1.deinit();
-    var easy2 = try newEasy(&wtr2.writer, "http://edgebin.liujiacai.net/ip");
-    defer easy2.deinit();
+    var headers_easy = try newEasy(&headers_writer.writer, "http://edgebin.liujiacai.net/headers");
+    defer headers_easy.deinit();
+    var ip_easy = try newEasy(&ip_writer.writer, "http://edgebin.liujiacai.net/ip");
+    defer ip_easy.deinit();
 
-    try multi.addHandle(&easy1);
-    try multi.addHandle(&easy2);
+    try multi.addHandle(&headers_easy);
+    try multi.addHandle(&ip_easy);
 
     var keep_running = true;
     while (keep_running) {

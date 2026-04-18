@@ -5,7 +5,9 @@
 # Zig programming language
 
 zig-cache/
-*zig-*/
+.zig-cache/
+zig-out/
+zig-pkg/
 build/
 build-*/
 docgen_tmp/
