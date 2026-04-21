@@ -19,14 +19,20 @@ pub fn build(b: *Build) !void {
     const opt = b.addOptions();
     opt.addOption([]const u8, "version", manifest.version);
     const build_info_module = opt.createModule();
-    const c_module = createCBindingsModule(b, target, optimize, link_vendor) orelse return;
 
+    // Register the "curl" module unconditionally so consumers can always call
+    // `dep.module("curl")` without panicking. On first build, lazy sub-deps
+    // (curl/zlib/mbedtls tarballs) may not be fetched yet — we early-return
+    // below after the module exists, letting the parent build runner fetch
+    // them and retry.
     const module = b.addModule(MODULE_NAME, .{
         .root_source_file = b.path("src/root.zig"),
         .link_libc = true,
         .target = target,
         .optimize = optimize,
     });
+
+    const c_module = createCBindingsModule(b, target, optimize, link_vendor) orelse return;
     addSharedImports(module, build_info_module, c_module);
 
     var libcurl: ?*Step.Compile = null;
