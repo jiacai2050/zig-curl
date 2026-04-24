@@ -390,6 +390,18 @@ pub fn setPassword(self: *Self, password: [:0]const u8) !void {
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PASSWORD, password.ptr), &self.diagnostics);
 }
 
+pub fn setProxy(self: *Self, proxy: [:0]const u8) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_PROXY, proxy.ptr), &self.diagnostics);
+}
+
+pub fn setAcceptEncoding(self: *Self, accept_encoding: [:0]const u8) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_ACCEPT_ENCODING, accept_encoding.ptr), &self.diagnostics);
+}
+
+pub fn setCookieFile(self: *Self, cookie_file: [:0]const u8) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_COOKIEFILE, cookie_file.ptr), &self.diagnostics);
+}
+
 pub const IpResolve = enum(c_int) {
     whatever = c.CURL_IPRESOLVE_WHATEVER,
     v4 = c.CURL_IPRESOLVE_V4,
