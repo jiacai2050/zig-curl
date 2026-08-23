@@ -421,5 +421,7 @@ const srcs = &.{
     "lib/creds.c",
     "lib/peer.c",
     "lib/cf-recvbuf.c",
-    "lib/proxy.c"
+    "lib/proxy.c",
+    "lib/thrdqueue.c",
+    "lib/thrdpool.c"
 };
