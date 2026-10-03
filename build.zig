@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const SanitizeC = std.zig.SanitizeC;
 
 const MODULE_NAME = "curl";
+const EXAMPLE_NAMES = .{ "basic", "post", "upload", "advanced", "multi", "header" };
 
 pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
@@ -16,15 +17,7 @@ pub fn build(b: *Build) !void {
     const manifest = try parseManifest(b);
     defer manifest.deinit(b.allocator);
 
-    const opt = b.addOptions();
-    opt.addOption([]const u8, "version", manifest.version);
-    const build_info_module = opt.createModule();
-
-    // Register the "curl" module unconditionally so consumers can always call
-    // `dep.module("curl")` without panicking. On first build, lazy sub-deps
-    // (curl/zlib/mbedtls tarballs) may not be fetched yet — we early-return
-    // below after the module exists, letting the parent build runner fetch
-    // them and retry.
+    // Register the "curl" module unconditionally so consumers can always call `dep.module("curl")`
     const module = b.addModule(MODULE_NAME, .{
         .root_source_file = b.path("src/root.zig"),
         .link_libc = true,
@@ -32,38 +25,49 @@ pub fn build(b: *Build) !void {
         .optimize = optimize,
     });
 
-    const c_module = createCBindingsModule(b, target, optimize, link_vendor) orelse return;
-    addSharedImports(module, build_info_module, c_module);
+    const opt = b.addOptions();
+    opt.addOption([]const u8, "version", manifest.version);
+    module.addImport("build_info", opt.createModule());
 
-    var libcurl: ?*Step.Compile = null;
+    // Resolve backend and vendor dependencies before configuring C bindings
+    var curl_include_path: ?std.Build.LazyPath = null;
     if (link_vendor) {
-        if (buildLibcurl(b, target, optimize, sanitize_c, mbedtls_pthreads)) |v| {
-            libcurl = v;
-            module.linkLibrary(v);
-        } else {
+        const curl_dep = b.lazyDependency("curl", .{});
+        const mbedtls_dep = b.lazyDependency("mbedtls", .{});
+        const zlib_dep = b.lazyDependency("zlib", .{});
+
+        // Exit early if any vendor dependency is not yet downloaded, enabling concurrent fetching
+        if (curl_dep == null or mbedtls_dep == null or zlib_dep == null) {
             return;
         }
+
+        const libcurl = buildLibcurl(b, target, optimize, sanitize_c, mbedtls_pthreads, curl_dep.?, mbedtls_dep.?, zlib_dep.?);
+        curl_include_path = curl_dep.?.path("include");
+        module.linkLibrary(libcurl);
+    } else {
+        module.linkSystemLibrary("curl", .{});
     }
 
-    inline for (.{ "basic", "post", "upload", "advanced", "multi", "header" }) |name| {
-        try addExample(b, name, module, libcurl, target, optimize);
+    // Setup C bindings only after dependencies and include paths are fully resolved
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    if (curl_include_path) |include_path| {
+        translate_c.addIncludePath(include_path);
+    } else {
+        translate_c.linkSystemLibrary("curl", .{});
+    }
+    module.addImport("c", translate_c.createModule());
+
+    inline for (EXAMPLE_NAMES) |name| {
+        try addExample(b, name, module, target, optimize);
     }
 
     const main_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/root.zig"),
-            .link_libc = true,
-            .target = target,
-            .optimize = optimize,
-        }),
+        .root_module = module,
     });
-    addSharedImports(main_tests.root_module, build_info_module, c_module);
-
-    if (libcurl) |lib| {
-        main_tests.root_module.linkLibrary(lib);
-    } else {
-        main_tests.root_module.linkSystemLibrary("curl", .{});
-    }
 
     const run_main_tests = b.addRunArtifact(main_tests);
     const test_step = b.step("test", "Run library tests");
@@ -81,8 +85,9 @@ pub fn build(b: *Build) !void {
     const docs_step = b.step("docs", "Generate documentation");
     docs_step.dependOn(&install_docs.step);
 
-    const check_step = b.step("check", "Used for checking the library");
-    inline for (.{ "basic", "advanced", "multi" }) |name| {
+    const check_step = b.step("check", "Used for checking the library and examples");
+    check_step.dependOn(&main_tests.step);
+    inline for (EXAMPLE_NAMES) |name| {
         const check_exe = b.addExecutable(.{
             .name = "check-" ++ name,
             .root_module = b.createModule(.{
@@ -104,55 +109,23 @@ fn buildLibcurl(
     optimize: std.builtin.OptimizeMode,
     sanitize_c: ?std.zig.SanitizeC,
     mbedtls_pthreads: bool,
-) ?*Step.Compile {
-    const curl = @import("libs/curl.zig").create(b, target, optimize, sanitize_c, mbedtls_pthreads);
-    const tls = @import("libs/mbedtls.zig").create(b, target, optimize, sanitize_c, mbedtls_pthreads);
-    const zlib = @import("libs/zlib.zig").create(b, target, optimize, sanitize_c);
-    if (curl == null or tls == null or zlib == null) {
-        return null;
-    }
+    curl_dep: *Build.Dependency,
+    mbedtls_dep: *Build.Dependency,
+    zlib_dep: *Build.Dependency,
+) *Step.Compile {
+    const libcurl = @import("libs/curl.zig").create(b, target, optimize, sanitize_c, mbedtls_pthreads, curl_dep);
+    const tls = @import("libs/mbedtls.zig").create(b, target, optimize, sanitize_c, mbedtls_pthreads, mbedtls_dep);
+    const zlib = @import("libs/zlib.zig").create(b, target, optimize, sanitize_c, zlib_dep);
 
-    const libcurl = curl.?;
-    libcurl.root_module.linkLibrary(tls.?);
-    libcurl.root_module.linkLibrary(zlib.?);
+    libcurl.root_module.linkLibrary(tls);
+    libcurl.root_module.linkLibrary(zlib);
     return libcurl;
-}
-
-fn createCBindingsModule(
-    b: *Build,
-    target: Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    link_vendor: bool,
-) ?*Module {
-    const translate_c = b.addTranslateC(.{
-        .root_source_file = b.path("src/c.h"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    if (link_vendor) {
-        const curl_dep = b.lazyDependency("curl", .{
-            .target = target,
-            .optimize = optimize,
-        }) orelse return null;
-        translate_c.addIncludePath(curl_dep.path("include"));
-    } else {
-        translate_c.linkSystemLibrary("curl", .{});
-    }
-
-    return translate_c.createModule();
-}
-
-fn addSharedImports(module: *Module, build_info_module: *Module, c_module: *Module) void {
-    module.addImport("build_info", build_info_module);
-    module.addImport("c", c_module);
 }
 
 fn addExample(
     b: *Build,
     comptime name: []const u8,
     curl_module: *Module,
-    libcurl: ?*Step.Compile,
     target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) !void {
@@ -168,11 +141,6 @@ fn addExample(
     b.installArtifact(exe);
 
     exe.root_module.addImport(MODULE_NAME, curl_module);
-    if (libcurl) |lib| {
-        exe.root_module.linkLibrary(lib);
-    } else {
-        exe.root_module.linkSystemLibrary("curl", .{});
-    }
 
     const run_step = b.step(
         "run-" ++ name,

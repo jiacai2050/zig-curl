@@ -1,7 +1,14 @@
 const std = @import("std");
 const ResolvedTarget = std.Build.ResolvedTarget;
 
-pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sanitize_c: ?std.zig.SanitizeC, enable_pthreads: bool) ?*std.Build.Step.Compile {
+pub fn create(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    sanitize_c: ?std.zig.SanitizeC,
+    enable_pthreads: bool,
+    mbedtls_dep: *std.Build.Dependency,
+) *std.Build.Step.Compile {
     const lib = b.addLibrary(.{
         .linkage = .static,
         .name = "mbedtls",
@@ -12,11 +19,6 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
             .sanitize_c = sanitize_c,
         }),
     });
-
-    const mbedtls_dep = b.lazyDependency("mbedtls", .{
-        .target = target,
-        .optimize = optimize,
-    }) orelse return null;
     inline for (srcs) |s| {
         lib.root_module.addCSourceFile(.{ .file = mbedtls_dep.path(s), .flags = &.{"-std=c99"} });
     }

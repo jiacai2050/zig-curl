@@ -1,6 +1,13 @@
 const std = @import("std");
 
-pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sanitize_c: ?std.zig.SanitizeC, mbedtls_pthreads: bool) ?*std.Build.Step.Compile {
+pub fn create(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    sanitize_c: ?std.zig.SanitizeC,
+    mbedtls_pthreads: bool,
+    curl_dep: *std.Build.Dependency,
+) *std.Build.Step.Compile {
     const module = b.createModule(.{
         .target = target,
         .optimize = optimize,
@@ -13,10 +20,6 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         .name = "curl",
         .root_module = module,
     });
-    const curl_dep = b.lazyDependency("curl", .{
-        .target = target,
-        .optimize = optimize,
-    }) orelse return null;
 
     inline for (srcs) |s| {
         module.addCSourceFile(.{
