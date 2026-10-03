@@ -22,6 +22,10 @@ lint:
 
 test:
 	zig build test $(ARGS)
+	cd test/downstream && zig build run $(ARGS)
+
+test-downstream:
+	cd test/downstream && zig build run $(ARGS)
 
 docs:
 	zig build docs
@@ -33,4 +37,4 @@ clean:
 serve:
 	cd server && go run main.go
 
-.PHONY: run fix lint test docs clean serve
+.PHONY: run fix lint test test-downstream docs clean serve
