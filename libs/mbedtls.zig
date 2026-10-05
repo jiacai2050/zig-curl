@@ -33,7 +33,7 @@ pub fn create(
     }
 
     if (target.result.os.tag == .windows) {
-        lib.root_module.linkSystemLibrary("ws2_32", .{});
+        lib.root_module.linkSystemLibrary("ws2_32", .{ .use_pkg_config = .no });
     }
     return lib;
 }

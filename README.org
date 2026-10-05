@@ -1,18 +1,22 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2026-04-18T15:36:32+0800
+#+LASTMOD: 2026-10-05T15:14:08+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
-[[https://img.shields.io/badge/zig%20version-0.16.0-blue.svg]]
+[[https://img.shields.io/badge/zig%20version-0.17.0-blue.svg]]
 [[https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml][https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml/badge.svg]]
 
 #+html: <p align="center"><img src="docs/logo.svg" width="35%"/></p>
 
 Zig bindings for [[https://curl.haxx.se/libcurl/][libcurl]], a free and easy-to-use client-side URL transfer library.
 
-This package targets Zig =0.16=.
-For Zig =0.15=, use the [[https://github.com/jiacai2050/zig-curl/tree/0.15][0.15 branch]].
+This package supports the following Zig versions:
+| Zig version | Branch |
+|-------------+--------|
+| =0.17=      | main   |
+| =0.16=      | [[https://github.com/jiacai2050/zig-curl/tree/0.16][0.16]]   |
+| =0.15=      | [[https://github.com/jiacai2050/zig-curl/tree/0.15][0.15]]   |
 
 The vendored libraries consist of:
 | Library | Version |
@@ -34,7 +38,7 @@ const curl = @import("curl");
 const URL = "https://edgebin.liujiacai.net/anything";
 
 pub fn main(init: std.process.Init) !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    var gpa: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
     defer if (gpa.deinit() != .ok) @panic("leak");
     const allocator = gpa.allocator();
 

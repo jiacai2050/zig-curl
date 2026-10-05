@@ -302,7 +302,7 @@ pub fn setHttpVersion(self: *Self, version: HttpVersion) !void {
     try checkCode(c.curl_easy_setopt(
         self.handle,
         c.CURLOPT_HTTP_VERSION,
-        @intFromEnum(version),
+        @backingInt(version),
     ), &self.diagnostics);
 }
 
@@ -410,7 +410,7 @@ pub const IpResolve = enum(c_int) {
 
 pub fn setIpResolve(self: *Self, ip_resolve: IpResolve) !void {
     try checkCode(
-        c.curl_easy_setopt(self.handle, c.CURLOPT_IPRESOLVE, @intFromEnum(ip_resolve)),
+        c.curl_easy_setopt(self.handle, c.CURLOPT_IPRESOLVE, @backingInt(ip_resolve)),
         &self.diagnostics,
     );
 }

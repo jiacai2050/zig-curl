@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const SEP = "-" ** 20;
+const SEP: [20]u8 = @splat('-');
 
 pub fn println(msg: []const u8) void {
     std.debug.print("{s}{s}{s}\n", .{ SEP, msg, SEP });
