@@ -45,7 +45,9 @@ pub fn build(b: *Build) !void {
         curl_include_path = curl_dep.?.path("include");
         module.linkLibrary(libcurl);
     } else {
-        module.linkSystemLibrary("curl", .{});
+        module.linkSystemLibrary("curl", .{
+            .use_pkg_config = if (target.result.os.tag == .windows) .no else .yes,
+        });
     }
 
     // Setup C bindings only after dependencies and include paths are fully resolved
@@ -57,7 +59,9 @@ pub fn build(b: *Build) !void {
     if (curl_include_path) |include_path| {
         translate_c.addIncludePath(include_path);
     } else {
-        translate_c.linkSystemLibrary("curl", .{});
+        translate_c.linkSystemLibrary("curl", .{
+            .use_pkg_config = if (target.result.os.tag == .windows) .no else .yes,
+        });
     }
     module.addImport("c", translate_c.createModule());
 
@@ -159,16 +163,15 @@ const Manifest = struct {
 
 fn parseManifest(b: *Build) !Manifest {
     const input = @embedFile("build.zig.zon");
-    var diagnostics: std.zon.parse.Diagnostics = .{};
-    defer diagnostics.deinit(b.allocator);
-    const parsed = std.zon.parse.fromSliceAlloc(
-        Manifest,
-        b.allocator,
-        input,
-        &diagnostics,
-        .{ .free_on_error = true, .ignore_unknown_fields = true },
-    ) catch |err| {
-        std.debug.print("Parse diagnostics:\n{f}\n", .{diagnostics});
+    var diagnostics: std.zon.parse.Diagnostics = undefined;
+    const parsed = std.zon.parse.fromSlice(Manifest, .{
+        .gpa = b.allocator,
+        .arena = b.allocator,
+        .source = input,
+        .diagnostics = &diagnostics,
+        .ignore_unknown_fields = true,
+    }) catch |err| {
+        diagnostics.log("build.zig.zon");
         return err;
     };
 

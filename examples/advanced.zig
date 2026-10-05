@@ -8,8 +8,8 @@ const Easy = curl.Easy;
 const UA = "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0";
 
 pub fn main(init: std.process.Init) !void {
-    var gpa = std.heap.DebugAllocator(.{}){};
-    defer if (gpa.deinit() != .ok) @panic("leak");
+    var gpa: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
+    defer if (gpa.deinit() != 0) @panic("leak");
     const allocator = gpa.allocator();
 
     var ca_bundle = try curl.allocCABundle(allocator, init.io);

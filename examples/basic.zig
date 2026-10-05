@@ -4,8 +4,8 @@ const curl = @import("curl");
 const URL = "https://edgebin.liujiacai.net/anything";
 
 pub fn main(init: std.process.Init) !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer if (gpa.deinit() != .ok) @panic("leak");
+    var gpa: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
+    defer if (gpa.deinit() != 0) @panic("leak");
     const allocator = gpa.allocator();
 
     var ca_bundle = try curl.allocCABundle(allocator, init.io);

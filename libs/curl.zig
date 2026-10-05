@@ -54,7 +54,7 @@ pub fn create(
     lib.root_module.addCMacro("HAVE_LIBZ", "1");
     lib.root_module.addCMacro("HAVE_ZLIB_H", "1");
     if (target.result.os.tag == .windows) {
-        module.linkSystemLibrary("bcrypt", .{});
+        module.linkSystemLibrary("bcrypt", .{ .use_pkg_config = .no });
         return lib;
     }
     lib.root_module.addCMacro("CURL_EXTERN_SYMBOL", "__attribute__ ((__visibility__ (\"default\"))");
@@ -209,9 +209,9 @@ pub fn create(
     const system_name = getCurlOS(target) orelse blk: {
         const arch = @tagName(target.result.cpu.arch);
         const os = @tagName(target.result.os.tag);
-        break :blk std.fmt.allocPrint(b.allocator, "{s}-pc-{s}", .{ arch, os }) catch unreachable;
+        break :blk b.allocator.print("{s}-pc-{s}", .{ arch, os }) catch unreachable;
     };
-    const curl_os = std.fmt.allocPrint(b.allocator, "\"{s}\"", .{system_name}) catch unreachable;
+    const curl_os = b.allocator.print("\"{s}\"", .{system_name}) catch unreachable;
     lib.root_module.addCMacro("CURL_OS", curl_os);
 
     return lib;
