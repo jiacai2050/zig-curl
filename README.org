@@ -67,6 +67,35 @@ pub fn main(init: std.process.Init) !void {
 
 Check [[file:examples]] for more examples.
 
+** std.Io integration
+The request and response body APIs use Zig 0.17's =std.Io.Reader= and =std.Io.Writer= directly. libcurl still performs the transfer; the adapters synchronously read from or write to these interfaces in libcurl callbacks.
+
+Pass a writer to =fetch= to receive a response body:
+#+begin_src zig
+var body = std.Io.Writer.Allocating.init(allocator);
+defer body.deinit();
+
+const response = try easy.fetch(URL, .{ .writer = &body.writer });
+std.debug.print("Status: {d}\nBody: {s}\n", .{
+    response.status_code,
+    body.writer.buffered(),
+});
+#+end_src
+
+For uploads, pass a reader and a writer for the response body to =upload=. A file reader needs the program's =init.io= context:
+#+begin_src zig
+var file_buffer: [4096]u8 = undefined;
+const file = try std.Io.Dir.cwd().openFile(init.io, path, .{});
+defer file.close(init.io);
+var reader = file.reader(init.io, &file_buffer);
+
+var response_body = std.Io.Writer.Allocating.init(allocator);
+defer response_body.deinit();
+const response = try easy.upload(URL, &reader.interface, &response_body.writer);
+#+end_src
+
+Use =init.io= with =curl.allocCABundle= as well when loading system certificates. For multipart parts, =MultiPart.NonCopyingData.ReaderBased= can avoid copying a large body, but the reader must remain valid until the transfer completes and its size must be known. These Reader/Writer adapters are synchronous: they do not make =Easy= or =Multi.poll= asynchronous or integrate curl with a Zig event loop.
+
 ** Diagnostics
 When a curl operation fails, it returns a generic =error.Curl=. To get more detailed information, you can use the =diagnostics= field in =Easy= or =Multi=.
 
