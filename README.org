@@ -113,6 +113,13 @@ When a curl operation fails, it returns a generic =error.Curl=. To get more deta
     };
 #+end_src
 
+** Asynchronous event-loop integration
+=Easy.fetch= and =Easy.upload= are synchronous. =Multi.poll= also blocks while waiting for activity. For an event-loop-driven implementation, =AsyncMulti= exposes libcurl's multi-socket API without owning or blocking the event loop.
+
+Create =AsyncMulti.Hooks= with socket and timer callbacks, then pass its stable address to =AsyncMulti.init=. The socket callback registers, updates, or removes readiness notifications; the timer callback schedules or cancels a timer (=timeout_ms == -1= cancels it). These callbacks must return promptly and must not call curl or block. From the event loop, call =socketReady= when a socket becomes readable or writable, and =timerExpired= when the timer fires. Drain =readInfo= to collect completed transfers.
+
+The event-loop adapter is intentionally supplied by the application: it should translate its runtime's socket-readiness and timer facilities into these hooks. A callback returning nonzero aborts the current libcurl operation. Keep the hooks, easy handles, and callback context alive while registered; remove easy handles before destroying them. This interface does not make synchronous Reader/Writer callbacks asynchronous, and synchronous file or stream I/O inside those callbacks can still block the event-loop thread.
+
 ** Documentation
 See https://jiacai2050.github.io/zig-curl/
 

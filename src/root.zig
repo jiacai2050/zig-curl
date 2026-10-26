@@ -11,6 +11,7 @@ pub const Diagnostics = @import("errors.zig").Diagnostics;
 
 pub const Easy = @import("Easy.zig");
 pub const Multi = @import("Multi.zig");
+pub const AsyncMulti = @import("AsyncMulti.zig");
 pub const MultiPart = @import("MultiPart.zig");
 
 pub const printLibcurlVersion = util.printLibcurlVersion;
