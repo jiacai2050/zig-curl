@@ -1,5 +1,5 @@
 //! Event-loop adapter for driving libcurl's multi-socket interface without blocking.
-const std = @import("std");
+const Easy = @import("Easy.zig");
 const Multi = @import("Multi.zig");
 const errors = @import("errors.zig");
 const util = @import("util.zig");
@@ -16,7 +16,8 @@ pub const SocketInterest = enum {
 };
 
 /// These callbacks must only update or enqueue event-loop registrations.
-/// They must not block or call back into this AsyncMulti.
+/// They must not block or call back into this AsyncMulti. Return zero on
+/// success and a nonzero value to abort active transfers.
 pub const Hooks = struct {
     context: *anyopaque,
     update_socket: *const fn (
@@ -41,19 +42,19 @@ pub fn init(hooks: *const Hooks) !Self {
     errdefer multi.deinit() catch {};
 
     try checkMCode(
-        c.curl_multi_setopt(multi.multi, c.CURLMOPT_SOCKETFUNCTION, socketCallback),
-        &multi.diagnostics,
-    );
-    try checkMCode(
         c.curl_multi_setopt(multi.multi, c.CURLMOPT_SOCKETDATA, hooks),
         &multi.diagnostics,
     );
     try checkMCode(
-        c.curl_multi_setopt(multi.multi, c.CURLMOPT_TIMERFUNCTION, timerCallback),
+        c.curl_multi_setopt(multi.multi, c.CURLMOPT_TIMERDATA, hooks),
         &multi.diagnostics,
     );
     try checkMCode(
-        c.curl_multi_setopt(multi.multi, c.CURLMOPT_TIMERDATA, hooks),
+        c.curl_multi_setopt(multi.multi, c.CURLMOPT_SOCKETFUNCTION, socketCallback),
+        &multi.diagnostics,
+    );
+    try checkMCode(
+        c.curl_multi_setopt(multi.multi, c.CURLMOPT_TIMERFUNCTION, timerCallback),
         &multi.diagnostics,
     );
 
@@ -67,8 +68,13 @@ pub fn deinit(self: *Self) !void {
     return self.multi.deinit();
 }
 
-pub fn addHandle(self: *Self, easy: anytype) !void {
+pub fn addHandle(self: *Self, easy: *Easy) !void {
     return self.multi.addHandle(easy);
+}
+
+/// Cancel an active transfer by removing its easy handle from the multi handle.
+pub fn cancel(self: *Self, easy: *Easy) !void {
+    return self.multi.removeHandle(easy.handle);
 }
 
 pub fn removeHandle(self: *Self, handle: *c.CURL) !void {
