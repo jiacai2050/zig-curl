@@ -13,9 +13,9 @@ pub const Easy = @import("Easy.zig");
 pub const Multi = @import("Multi.zig");
 pub const MultiPart = @import("MultiPart.zig");
 pub const Share = @import("Share.zig");
-pub const AsyncClient = @import("AsyncClient.zig");
-pub const Response = AsyncClient.Response;
-pub const RequestBuilder = AsyncClient.RequestBuilder;
+pub const Client = @import("Client.zig");
+pub const Response = Client.Response;
+pub const RequestBuilder = Client.RequestBuilder;
 
 pub const printLibcurlVersion = util.printLibcurlVersion;
 pub const hasParseHeaderSupport = util.hasParseHeaderSupport;

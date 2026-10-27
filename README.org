@@ -30,11 +30,11 @@ The vendored libraries consist of:
 
 | Client | Style | Concurrency Model | Best For |
 |--------+-------+-------------------+----------|
-| =AsyncClient= | High-level (fluent builder) | Non-blocking via =std.Io= | Concurrent requests, REST APIs, JSON parsing, automatic CA/connection pooling |
+| =Client= | High-level (fluent builder) | Non-blocking via =std.Io= | Concurrent requests, REST APIs, JSON parsing, automatic CA/connection pooling |
 | =Easy= | Low-level (direct libcurl wrapper) | Synchronous / blocking | Simple scripts, custom stream writers/readers, fine-grained libcurl option control |
 
-** AsyncClient (Concurrent / High-Level)
-=AsyncClient= is modeled after Rust's =reqwest=. It features fluent request chaining, strongly-typed JSON deserialization, and native integration with =std.Io='s concurrency model. It also manages connection reuse and DNS caching across requests.
+** Client (Concurrent / High-Level)
+=Client= is modeled after Rust's =reqwest=. It features fluent request chaining, strongly-typed JSON deserialization, and native integration with =std.Io='s concurrency model. It also manages connection reuse and DNS caching across requests.
 
 #+begin_src zig
 const std = @import("std");
@@ -46,7 +46,7 @@ pub fn main(init: std.process.Init) !void {
     const allocator = gpa.allocator();
 
     // 1. Initialize client (automatically loads system CA bundle & shares DNS/SSL cache)
-    var client = try curl.AsyncClient.init(allocator, init.io, .{});
+    var client = try curl.Client.init(allocator, init.io, .{});
     defer client.deinit();
 
     // 2. Fluent GET request
@@ -73,7 +73,7 @@ pub fn main(init: std.process.Init) !void {
 }
 #+end_src
 
-For concurrent batch requests using =std.Io.Group=, Bearer authentication, and worker pipeline patterns, see [[file:examples/async.zig][examples/async.zig]].
+For concurrent batch requests using =std.Io.Group=, Bearer authentication, and worker pipeline patterns, see [[file:examples/client.zig][examples/client.zig]].
 
 ** Easy (Synchronous / Direct)
 =Easy= wraps libcurl's =curl_easy_*= interface, providing direct control over transfers and streaming I/O.

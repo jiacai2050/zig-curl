@@ -12,7 +12,7 @@
 //!    - `std.Io.Queue`: Asynchronous producer-consumer worker pipeline (Channel pattern)
 const std = @import("std");
 const curl = @import("curl");
-const AsyncClient = curl.AsyncClient;
+const Client = curl.Client;
 
 const BASE_URL = "https://edgebin.liujiacai.net";
 
@@ -46,7 +46,7 @@ pub fn main(init: std.process.Init) !void {
     const allocator = gpa.allocator();
 
     // 1. Initialize global async client (automatically loads system CA bundle, spawns reactor thread and initializes CURLSH)
-    var client = try AsyncClient.init(allocator, io, .{
+    var client = try Client.init(allocator, io, .{
         .share_dns = true,
         .share_connect = true,
         .share_ssl_session = true,
@@ -194,7 +194,7 @@ pub fn main(init: std.process.Init) !void {
         };
 
         const Worker = struct {
-            fn run(c: *AsyncClient, i: std.Io, path: [:0]const u8) std.Io.Cancelable!void {
+            fn run(c: *Client, i: std.Io, path: [:0]const u8) std.Io.Cancelable!void {
                 const url = c.allocator.printSentinel("{s}{s}", .{ BASE_URL, path }, 0) catch return;
                 defer c.allocator.free(url);
 
@@ -232,7 +232,7 @@ pub fn main(init: std.process.Init) !void {
         };
 
         const Tasks = struct {
-            fn fastRequest(c: *AsyncClient, i: std.Io) u16 {
+            fn fastRequest(c: *Client, i: std.Io) u16 {
                 var r = c.get(BASE_URL ++ "/delay/1")
                     .timeout(15000)
                     .send(i) catch return 0;
@@ -240,7 +240,7 @@ pub fn main(init: std.process.Init) !void {
                 return r.status_code;
             }
 
-            fn slowRequest(c: *AsyncClient, i: std.Io) u16 {
+            fn slowRequest(c: *Client, i: std.Io) u16 {
                 var r = c.get(BASE_URL ++ "/delay/3")
                     .timeout(15000)
                     .send(i) catch return 0;
@@ -282,7 +282,7 @@ pub fn main(init: std.process.Init) !void {
         var work_queue = std.Io.Queue([:0]const u8).init(&queue_buffer);
 
         const PipelineWorker = struct {
-            fn consume(c: *AsyncClient, i: std.Io, q: *std.Io.Queue([:0]const u8), worker_id: usize) std.Io.Cancelable!void {
+            fn consume(c: *Client, i: std.Io, q: *std.Io.Queue([:0]const u8), worker_id: usize) std.Io.Cancelable!void {
                 while (true) {
                     const path = q.getOne(i) catch |err| switch (err) {
                         error.Closed, error.Canceled => break,
@@ -329,7 +329,7 @@ pub fn main(init: std.process.Init) !void {
         // Launching an asynchronous network operation with io.async(),
         // performing local computation in parallel, then explicitly awaiting the future.
         const Worker = struct {
-            fn fetchIp(i: std.Io, c: *AsyncClient) anyerror!u16 {
+            fn fetchIp(i: std.Io, c: *Client) anyerror!u16 {
                 var res = try c.get(BASE_URL ++ "/ip")
                     .timeout(10000)
                     .send(i);

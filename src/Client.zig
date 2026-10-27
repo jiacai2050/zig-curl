@@ -1,4 +1,4 @@
-//! `AsyncClient` provides an asynchronous, high-throughput, structured HTTP client
+//! `Client` provides an asynchronous, high-throughput, structured HTTP client
 //! integrating libcurl's multi-handle with `std.Io` concurrency runtime.
 //!
 //! Thread Safety Contract:
@@ -131,7 +131,7 @@ pub const Options = struct {
     share_connect: bool = true,
     share_ssl_session: bool = true,
     /// Explicit CA bundle override. If null and load_ca_bundle is true,
-    /// AsyncClient will automatically call util.allocCABundle(allocator, io).
+    /// Client will automatically call util.allocCABundle(allocator, io).
     ca_bundle: ?ResizableBuffer = null,
     /// Whether to automatically allocate the system CA bundle when ca_bundle is null.
     load_ca_bundle: bool = true,
@@ -624,8 +624,8 @@ pub const RequestBuilder = struct {
 // Unit Tests
 // -------------------------------------------------------------------------
 
-test "AsyncClient: init and deinit lifecycle" {
-    // Verifies that AsyncClient and its background worker thread can be started
+test "Client: init and deinit lifecycle" {
+    // Verifies that Client and its background worker thread can be started
     // and stopped cleanly without resource leaks or thread hangs.
     const allocator = std.testing.allocator;
     const io = std.testing.io;
@@ -639,7 +639,7 @@ test "AsyncClient: init and deinit lifecycle" {
     assert(client.ca_bundle != null);
 }
 
-test "AsyncClient: handle pool reuse and taint isolation" {
+test "Client: handle pool reuse and taint isolation" {
     // Verifies the core pool architecture:
     // 1. Clean handles are returned to the pool after execution
     // 2. Tainted handles (with custom configure hook) are destroyed rather than pooled
@@ -670,7 +670,7 @@ test "AsyncClient: handle pool reuse and taint isolation" {
     assert(client.pool.items.items.len == 0);
 }
 
-test "AsyncClient: RequestBuilder configuration chaining" {
+test "Client: RequestBuilder configuration chaining" {
     // Verifies that the fluent RequestBuilder records all configuration options
     // and correctly toggles is_tainted when dangerous/hook operations are applied.
     const allocator = std.testing.allocator;
@@ -711,7 +711,7 @@ test "AsyncClient: RequestBuilder configuration chaining" {
     assert(req3.is_tainted == true);
 }
 
-test "AsyncClient: max_concurrency semaphore integration" {
+test "Client: max_concurrency semaphore integration" {
     // Verifies that specifying max_concurrency properly initializes the Semaphore
     // and correctly acquires and posts permits during asynchronous execution.
     const allocator = std.testing.allocator;
@@ -741,7 +741,7 @@ test "AsyncClient: max_concurrency semaphore integration" {
     assert(client.semaphore.?.permits == 2);
 }
 
-test "AsyncClient: uncancelable event wait safety" {
+test "Client: uncancelable event wait safety" {
     // Verifies that RequestContext event completion can be awaited uncancelably
     // without prematurely exiting or destroying stack data when signals arrive.
     const io = std.testing.io;
@@ -810,7 +810,7 @@ fn startMockServer(
     return .{ .thread = thread, .port = port };
 }
 
-test "AsyncClient: send failure path c_headers leak reproduction" {
+test "Client: send failure path c_headers leak reproduction" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -833,7 +833,7 @@ test "AsyncClient: send failure path c_headers leak reproduction" {
     try std.testing.expectError(error.HookFailed, res);
 }
 
-test "AsyncClient: transfer failure does not crash on body double free (offline local)" {
+test "Client: transfer failure does not crash on body double free (offline local)" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -857,7 +857,7 @@ test "AsyncClient: transfer failure does not crash on body double free (offline 
     try std.testing.expectError(error.HttpTransferFailed, res);
 }
 
-test "AsyncClient: Response has no dangling easy_handle and pool reuse works (offline local)" {
+test "Client: Response has no dangling easy_handle and pool reuse works (offline local)" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -882,7 +882,7 @@ test "AsyncClient: Response has no dangling easy_handle and pool reuse works (of
     assert(std.mem.eql(u8, res.body, "OK"));
 }
 
-test "AsyncClient: fluent chaining works seamlessly on rvalues" {
+test "Client: fluent chaining works seamlessly on rvalues" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
     var client = try Self.init(allocator, io, .{});
@@ -906,7 +906,7 @@ test "AsyncClient: fluent chaining works seamlessly on rvalues" {
     assert(std.mem.eql(u8, res.body, "pong"));
 }
 
-test "AsyncClient: HEAD request completes without waiting for body" {
+test "Client: HEAD request completes without waiting for body" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -926,7 +926,7 @@ test "AsyncClient: HEAD request completes without waiting for body" {
     try std.testing.expectEqual(@as(usize, 0), res.body.len);
 }
 
-test "AsyncClient: shutdown drain cleans up in-flight requests without hanging" {
+test "Client: shutdown drain cleans up in-flight requests without hanging" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
