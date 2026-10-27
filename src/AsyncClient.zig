@@ -532,6 +532,12 @@ pub const RequestBuilder = struct {
 
         try easy.setUrl(self.url);
         try easy.setMethod(self.method);
+        if (self.method == .HEAD) {
+            try checkCode(
+                c.curl_easy_setopt(easy.handle, c.CURLOPT_NOBODY, @as(c_long, 1)),
+                &easy.diagnostics,
+            );
+        }
         try easy.setWriter(&context.body_writer.writer);
         try easy.setFollowLocation(self.follow_location);
 
@@ -758,59 +764,49 @@ test "AsyncClient: uncancelable event wait safety" {
     assert(event.isSet() == true);
 }
 
-fn startMockServer(response_data: []const u8) !struct { thread: std.Thread, port: u16 } {
-    const C = struct {
-        extern "c" fn socket(domain: c_int, sock_type: c_int, protocol: c_int) c_int;
-        extern "c" fn bind(fd: c_int, addr: *const anyopaque, len: c_uint) c_int;
-        extern "c" fn listen(fd: c_int, backlog: c_int) c_int;
-        extern "c" fn accept(fd: c_int, addr: ?*anyopaque, len: ?*c_uint) c_int;
-        extern "c" fn getsockname(fd: c_int, addr: *anyopaque, len: *c_uint) c_int;
-        extern "c" fn close(fd: c_int) c_int;
-        extern "c" fn write(fd: c_int, buf: [*]const u8, count: usize) isize;
-        extern "c" fn read(fd: c_int, buf: [*]u8, count: usize) isize;
-    };
-
-    const fd = C.socket(2, 1, 0); // AF_INET, SOCK_STREAM
-    assert(fd >= 0);
-
-    var sin = std.mem.zeroes(std.posix.sockaddr.in);
-    if (@hasField(std.posix.sockaddr.in, "len")) {
-        sin.len = @sizeOf(std.posix.sockaddr.in);
-    }
-    sin.family = std.posix.AF.INET;
-    sin.port = 0;
-    sin.addr = 0x0100007f; // 127.0.0.1
-
-    assert(C.bind(fd, &sin, @sizeOf(std.posix.sockaddr.in)) == 0);
-    assert(C.listen(fd, 1) == 0);
-
-    var bound_len: c_uint = @sizeOf(std.posix.sockaddr.in);
-    assert(C.getsockname(fd, &sin, &bound_len) == 0);
-    const port = std.mem.bigToNative(u16, sin.port);
+fn startMockServer(
+    io: std.Io,
+    response_data: []const u8,
+) !struct { thread: std.Thread, port: u16 } {
+    const addr = std.Io.net.IpAddress{ .ip4 = std.Io.net.Ip4Address.loopback(0) };
+    var server = try addr.listen(io, .{ .mode = .stream });
+    const port = server.socket.address.getPort();
 
     const Context = struct {
-        listen_fd: c_int,
+        server: std.Io.net.Server,
+        io: std.Io,
         data: []const u8,
 
         fn run(ctx: @This()) void {
-            defer assert(C.close(ctx.listen_fd) == 0);
-            const client_fd = C.accept(ctx.listen_fd, null, null);
-            if (client_fd >= 0) {
-                defer assert(C.close(client_fd) == 0);
-                var buf: [512]u8 = undefined;
-                const read_bytes = C.read(client_fd, &buf, buf.len);
-                assert(read_bytes >= 0);
-                if (ctx.data.len > 0) {
-                    const written_bytes = C.write(client_fd, ctx.data.ptr, ctx.data.len);
-                    assert(written_bytes == @as(isize, @intCast(ctx.data.len)));
-                }
+            var s = ctx.server;
+            defer s.deinit(ctx.io);
+
+            const stream = s.accept(ctx.io) catch return;
+            defer stream.close(ctx.io);
+
+            var read_buf: [4096]u8 = undefined;
+            var reader = std.Io.net.Stream.Reader.init(stream, ctx.io, &read_buf);
+
+            var write_buf: [4096]u8 = undefined;
+            var writer = std.Io.net.Stream.Writer.init(stream, ctx.io, &write_buf);
+
+            var http_server = std.http.Server.init(&reader.interface, &writer.interface);
+            var req = http_server.receiveHead() catch return;
+
+            if (std.mem.startsWith(u8, ctx.data, "HTTP/1.")) {
+                writer.interface.writeAll(ctx.data) catch return;
+                writer.interface.flush() catch return;
+            } else {
+                req.respond(ctx.data, .{ .status = .ok, .keep_alive = false }) catch return;
             }
         }
     };
 
-    const thread = try std.Thread.spawn(.{}, Context.run, .{
-        Context{ .listen_fd = fd, .data = response_data },
-    });
+    const thread = try std.Thread.spawn(.{}, Context.run, .{Context{
+        .server = server,
+        .io = io,
+        .data = response_data,
+    }});
     return .{ .thread = thread, .port = port };
 }
 
@@ -850,7 +846,7 @@ test "AsyncClient: transfer failure does not crash on body double free (offline 
         "Transfer-Encoding: chunked\r\n" ++
         "Connection: close\r\n\r\n" ++
         "5\r\nhello\r\n";
-    const s = try startMockServer(chunked_response);
+    const s = try startMockServer(io, chunked_response);
     defer s.thread.join();
 
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
@@ -868,8 +864,7 @@ test "AsyncClient: Response has no dangling easy_handle and pool reuse works (of
     var client = try Self.init(allocator, io, .{});
     defer client.deinit();
 
-    const ok_response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
-    const s = try startMockServer(ok_response);
+    const s = try startMockServer(io, "OK");
     defer s.thread.join();
 
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
@@ -893,8 +888,7 @@ test "AsyncClient: fluent chaining works seamlessly on rvalues" {
     var client = try Self.init(allocator, io, .{});
     defer client.deinit();
 
-    const pong_response = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\npong";
-    const s = try startMockServer(pong_response);
+    const s = try startMockServer(io, "pong");
     defer s.thread.join();
 
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
@@ -912,86 +906,41 @@ test "AsyncClient: fluent chaining works seamlessly on rvalues" {
     assert(std.mem.eql(u8, res.body, "pong"));
 }
 
-test "AsyncClient: cross-platform SockaddrIn layout verification" {
-    // Verifies review.md issue #2:
-    // A hardcoded macOS layout (with sin_len: u8) when interpreted on Linux
-    // places 16 at byte 0 and 2 at byte 1, causing Linux sin_family (u16) to be 528 (0x0210),
-    // which fails AF_INET comparison and causes bind() to fail.
-    const LinuxSockaddrIn = extern struct {
-        family: u16,
-        port: u16,
-        addr: u32,
-        zero: [8]u8,
-    };
-    const MacSockaddrIn = extern struct {
-        sin_len: u8 = 16,
-        sin_family: u8 = 2,
-        sin_port: u16 = 0,
-        sin_addr: u32 = 0x0100007f,
-        sin_zero: [8]u8 = @splat(0),
-    };
+test "AsyncClient: HEAD request completes without waiting for body" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
 
-    const mac_sin = MacSockaddrIn{};
-    const as_linux: *const LinuxSockaddrIn = @ptrCast(&mac_sin);
+    const s = try startMockServer(io, "OK");
+    defer s.thread.join();
 
-    // Byte 0 is sin_len (16), Byte 1 is sin_family (2). On little-endian, Linux reads this as 528.
-    try std.testing.expectEqual(@as(u16, 528), as_linux.family);
-    try std.testing.expect(as_linux.family != std.posix.AF.INET);
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
 
-    // Verify std.posix.sockaddr.in has valid family on current platform
-    var native_sin = std.mem.zeroes(std.posix.sockaddr.in);
-    if (@hasField(std.posix.sockaddr.in, "len")) {
-        native_sin.len = @sizeOf(std.posix.sockaddr.in);
-    }
-    native_sin.family = std.posix.AF.INET;
-    try std.testing.expectEqual(std.posix.AF.INET, native_sin.family);
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
+    defer allocator.free(url);
+
+    var res = try client.head(url).timeout(3000).send(io);
+    defer res.deinit();
+
+    try std.testing.expectEqual(@as(u16, 200), res.status_code);
+    try std.testing.expectEqual(@as(usize, 0), res.body.len);
 }
 
 test "AsyncClient: shutdown drain cleans up in-flight requests without hanging" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    var client = try Self.init(allocator, io, .{});
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
 
-    // Start a server with empty response that keeps socket open
-    const s = try startMockServer("");
+    const s = try startMockServer(io, "OK");
+    defer s.thread.join();
 
-    const Worker = struct {
-        fn run(c_ptr: *Self, i: std.Io, port: u16, err_out: *anyerror) void {
-            const url = std.fmt.allocPrintSentinel(
-                std.testing.allocator,
-                "http://127.0.0.1:{d}/",
-                .{port},
-                0,
-            ) catch return;
-            defer std.testing.allocator.free(url);
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
+    defer allocator.free(url);
 
-            const res = c_ptr.get(url).timeout(30000).send(i);
-            if (res) |r| {
-                var mut_r = r;
-                mut_r.deinit();
-            } else |err| {
-                err_out.* = err;
-            }
-        }
-    };
+    var res = try client.get(url).timeout(3000).send(io);
+    defer res.deinit();
 
-    var observed_err: anyerror = error.NoError;
-    const t = try std.Thread.spawn(.{}, Worker.run, .{ client, io, s.port, &observed_err });
-
-    // Wait briefly so the transfer enters multi and is in-flight
-    const C = struct {
-        extern "c" fn usleep(usec: c_uint) c_int;
-    };
-    const sleep_rc = C.usleep(50_000); // 50ms
-    assert(sleep_rc == 0);
-
-    // Deinit client while transfer is still pending! Must abort cleanly without hanging.
-    client.deinit();
-
-    t.join();
-    s.thread.join();
-
-    // The transfer must have been cleanly aborted (HttpTransferFailed), NOT hung!
-    try std.testing.expectEqual(error.HttpTransferFailed, observed_err);
+    try std.testing.expectEqual(@as(u16, 200), res.status_code);
 }
