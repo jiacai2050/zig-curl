@@ -6,7 +6,7 @@
 //! 3. Real network timeout simulation & precise error handling
 //! 4. HTTP Bearer authentication & automatic redirect tracking
 //! 5. Fine-grained escape-hatch customization via `.configure(hook)`
-//! 6. Zig 0.17 concurrency primitives:
+//! 6. Concurrency primitives:
 //!    - `std.Io.Group`: Structured batch concurrency (similar to `Promise.all`)
 //!    - `std.Io.Select`: Racing / First-completed pattern (similar to `Promise.race`)
 //!    - `std.Io.Queue`: Asynchronous producer-consumer worker pipeline (Channel pattern)
@@ -91,7 +91,7 @@ pub fn main(init: std.process.Init) !void {
                 .{ .name = "Content-Type", .value = "application/json" },
                 .{ .name = "X-Powered-By", .value = "zig-curl" },
             })
-            .body("{\"message\": \"Hello from Zig 0.17 async-curl!\"}")
+            .body("{\"message\": \"Hello from async-curl!\"}")
             .timeout(15000)
             .send(io);
         defer res.deinit();
@@ -182,7 +182,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // =========================================================================
-    // Showcase 6: Zig 0.17 Concurrency Primitive 1 -- std.Io.Group (Batch All)
+    // Showcase 6: Concurrency Primitive 1 -- std.Io.Group (Batch All)
     // =========================================================================
     std.debug.print("=== 6. Concurrency Primitive 1: std.Io.Group (Batch All) ===\n", .{});
     {
@@ -220,7 +220,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // =========================================================================
-    // Showcase 7: Zig 0.17 Concurrency Primitive 2 -- std.Io.Select (Racing)
+    // Showcase 7: Concurrency Primitive 2 -- std.Io.Select (Racing)
     // =========================================================================
     std.debug.print("=== 7. Concurrency Primitive 2: std.Io.Select (Racing) ===\n", .{});
     {
@@ -264,7 +264,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // =========================================================================
-    // Showcase 8: Zig 0.17 Concurrency Primitive 3 -- std.Io.Queue (Pipeline)
+    // Showcase 8: Concurrency Primitive 3 -- std.Io.Queue (Pipeline)
     // =========================================================================
     std.debug.print("=== 8. Concurrency Primitive 3: std.Io.Queue (Pipeline Crawling) ===\n", .{});
     {
@@ -321,7 +321,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // =========================================================================
-    // Showcase 9: Zig 0.17 Concurrency Primitive 4 -- Future(T) & Interleaving
+    // Showcase 9: Concurrency Primitive 4 -- Future(T) & Interleaving
     // =========================================================================
     std.debug.print("=== 9. Concurrency Primitive 4: Future(T) Interleaving ===\n", .{});
     {

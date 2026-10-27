@@ -1,5 +1,5 @@
 //! `AsyncClient` provides an asynchronous, high-throughput, structured HTTP client
-//! integrating libcurl's multi-handle with Zig 0.17's `std.Io` concurrency runtime.
+//! integrating libcurl's multi-handle with `std.Io` concurrency runtime.
 //!
 //! Thread Safety Contract:
 //! - `allocator`: Must be thread-safe (e.g. `std.heap.c_allocator`). The background reactor
