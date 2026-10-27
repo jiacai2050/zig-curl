@@ -1,6 +1,6 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2026-10-05T15:14:08+0800
+#+LASTMOD: 2026-10-27T19:38:58+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -26,11 +26,58 @@ The vendored libraries consist of:
 | mbedtls | [[https://github.com/Mbed-TLS/mbedtls/tree/v3.6.0][3.6.0]]   |
 
 * Usage
-#+begin_src bash :results verbatim :exports results :wrap src zig
-cat examples/basic.zig
+=zig-curl= provides two client interfaces designed for different use cases:
+
+| Client | Style | Concurrency Model | Best For |
+|--------+-------+-------------------+----------|
+| =Client= | High-level (fluent builder) | Non-blocking via =std.Io= | Concurrent requests, REST APIs, JSON parsing, automatic CA/connection pooling |
+| =Easy= | Low-level (direct libcurl wrapper) | Synchronous / blocking | Simple scripts, custom stream writers/readers, fine-grained libcurl option control |
+
+** Client (Concurrent / High-Level)
+=Client= is modeled after Rust's =reqwest=. It features fluent request chaining, strongly-typed JSON deserialization, and native integration with =std.Io='s concurrency model. It also manages connection reuse and DNS caching across requests.
+
+#+begin_src zig
+const std = @import("std");
+const curl = @import("curl");
+
+pub fn main(init: std.process.Init) !void {
+    var gpa: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
+    defer if (gpa.deinit() != 0) @panic("memory leak detected");
+    const allocator = gpa.allocator();
+
+    // 1. Initialize client (automatically loads system CA bundle & shares DNS/SSL cache)
+    var client = try curl.Client.init(allocator, init.io, .{});
+    defer client.deinit();
+
+    // 2. Fluent GET request
+    var res = try client.get("https://edgebin.liujiacai.net/ip")
+        .headers(&.{.{ .name = "Accept", .value = "application/json" }})
+        .timeout(10000)
+        .send(init.io);
+    defer res.deinit();
+
+    std.debug.print("Status: {d}\n", .{res.status_code});
+
+    // 3. Strongly-typed JSON deserialization directly from response
+    const IpGeo = struct { origin: []const u8, country: []const u8 };
+    const parsed = try res.json(IpGeo, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+    std.debug.print("IP: {s}, Country: {s}\n", .{ parsed.value.origin, parsed.value.country });
+
+    // 4. Asynchronous POST with body
+    var post_res = try client.post("https://edgebin.liujiacai.net/anything")
+        .headers(&.{.{ .name = "Content-Type", .value = "application/json" }})
+        .body("{\"message\": \"hello zig-curl\"}")
+        .send(init.io);
+    defer post_res.deinit();
+}
 #+end_src
 
-#+RESULTS:
+For concurrent batch requests using =std.Io.Group=, Bearer authentication, and worker pipeline patterns, see [[file:examples/client.zig][examples/client.zig]].
+
+** Easy (Synchronous / Direct)
+=Easy= wraps libcurl's =curl_easy_*= interface, providing direct control over transfers and streaming I/O.
+
 #+begin_src zig
 const std = @import("std");
 const curl = @import("curl");
@@ -39,36 +86,42 @@ const URL = "https://edgebin.liujiacai.net/anything";
 
 pub fn main(init: std.process.Init) !void {
     var gpa: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
-    defer if (gpa.deinit() != .ok) @panic("leak");
+    defer if (gpa.deinit() != 0) @panic("memory leak detected");
     const allocator = gpa.allocator();
 
     var ca_bundle = try curl.allocCABundle(allocator, init.io);
     defer ca_bundle.deinit(allocator);
+
     var easy = try curl.Easy.init(.{
         .ca_bundle = ca_bundle,
     });
     defer easy.deinit();
 
+    // 1. Simple GET without body
     {
         std.debug.print("GET without body\n", .{});
-        const resp = try easy.fetch(URL, .{});
-        std.debug.print("Status code: {d}\n", .{resp.status_code});
+        const response = try easy.fetch(URL, .{});
+        std.debug.print("Status code: {d}\n", .{response.status_code});
     }
 
+    // 2. GET with streaming writer
     {
         std.debug.print("\nGET with fixed buffer as body\n", .{});
         var buffer: [1024]u8 = undefined;
         var writer = std.Io.Writer.fixed(&buffer);
-        const resp = try easy.fetch(URL, .{ .writer = &writer });
-        std.debug.print("Status code: {d}\nBody: {s}\n", .{ resp.status_code, writer.buffered() });
+        const response = try easy.fetch(URL, .{ .writer = &writer });
+        std.debug.print("Status code: {d}\nBody: {s}\n", .{
+            response.status_code,
+            writer.buffered(),
+        });
     }
 }
 #+end_src
 
-Check [[file:examples]] for more examples.
+See [[file:examples/post.zig][examples/post.zig]], [[file:examples/upload.zig][examples/upload.zig]], and [[file:examples/header.zig][examples/header.zig]] for more synchronous patterns.
 
-** Diagnostics
-When a curl operation fails, it returns a generic =error.Curl=. To get more detailed information, you can use the =diagnostics= field in =Easy= or =Multi=.
+** Error Diagnostics
+When a curl operation fails, it returns a generic =error.Curl=. To get detailed libcurl error diagnostics, inspect the =diagnostics= field in =Easy= or =Multi=:
 
 #+begin_src zig
     var easy = try curl.Easy.init(.{ ... });
@@ -84,10 +137,7 @@ When a curl operation fails, it returns a generic =error.Curl=. To get more deta
     };
 #+end_src
 
-** Documentation
-See https://jiacai2050.github.io/zig-curl/
-
-** Installation
+* Installation
 #+begin_src bash
 # Latest version
 zig fetch --save git+https://github.com/jiacai2050/zig-curl.git
@@ -104,12 +154,15 @@ exe.root_module.addImport("curl", dep_curl.module("curl"));
 exe.root_module.link_libc = true;
 #+end_src
 
-This library will link to a vendored libcurl by default, you can disable it and link to system-wide with this
+This library links to a vendored libcurl by default. To disable and link against system libcurl:
 #+begin_src zig
 const dep_curl = b.dependency("curl", .{ .link_vendor = false });
 exe.root_module.linkSystemLibrary("curl", .{});
 exe.root_module.link_libc = true;
 #+end_src
+
+* Documentation
+See https://jiacai2050.github.io/zig-curl/
 
 * License
 [[file:LICENSE][MIT]]

@@ -36,6 +36,12 @@ pub fn main(init: std.process.Init) !void {
                         .{curl_multi_code},
                     );
                 },
+                .sh_code => |sh_code| {
+                    std.log.err(
+                        "putWithCustomHeader encountered a curl share error! error code: {}",
+                        .{sh_code},
+                    );
+                },
             }
         }
         return err;
@@ -53,6 +59,12 @@ pub fn main(init: std.process.Init) !void {
                     std.log.err(
                         "postMultipart encountered a curl multi error! error code: {}",
                         .{curl_multi_code},
+                    );
+                },
+                .sh_code => |sh_code| {
+                    std.log.err(
+                        "postMultipart encountered a curl share error! error code: {}",
+                        .{sh_code},
                     );
                 },
             }

@@ -20,3 +20,5 @@ zig-linux*
 libroot*
 .DS_Store
 *.o
+.zed/
+review.md

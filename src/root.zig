@@ -12,6 +12,10 @@ pub const Diagnostics = @import("errors.zig").Diagnostics;
 pub const Easy = @import("Easy.zig");
 pub const Multi = @import("Multi.zig");
 pub const MultiPart = @import("MultiPart.zig");
+pub const Share = @import("Share.zig");
+pub const Client = @import("Client.zig");
+pub const Response = Client.Response;
+pub const RequestBuilder = Client.RequestBuilder;
 
 pub const printLibcurlVersion = util.printLibcurlVersion;
 pub const hasParseHeaderSupport = util.hasParseHeaderSupport;

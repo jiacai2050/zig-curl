@@ -20,6 +20,7 @@ const hasParseHeaderSupport = @import("util.zig").hasParseHeaderSupport;
 const Self = @This();
 
 handle: *c.CURL,
+default_timeout_ms: usize,
 timeout_ms: usize,
 user_agent: [:0]const u8,
 ca_bundle: ?ResizableBuffer,
@@ -246,6 +247,7 @@ pub fn init(options: Options) !Self {
         .{
             .handle = handle,
             .ca_bundle = options.ca_bundle,
+            .default_timeout_ms = options.default_timeout_ms,
             .timeout_ms = options.default_timeout_ms,
             .user_agent = options.default_user_agent,
             .diagnostics = .{},
@@ -313,6 +315,14 @@ pub fn setFollowLocation(self: *Self, enable: bool) !void {
 
 pub fn reset(self: *Self) void {
     c.curl_easy_reset(self.handle);
+    self.timeout_ms = self.default_timeout_ms;
+    self.diagnostics = .{};
+}
+
+/// Attach a shared handle (`CURLSH`) to share DNS, connections, and SSL sessions.
+/// https://curl.se/libcurl/c/CURLOPT_SHARE.html
+pub fn setShare(self: *Self, share_handle: *c.CURLSH) !void {
+    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_SHARE, share_handle), &self.diagnostics);
 }
 
 pub fn setHeaders(self: *Self, headers: Headers) !void {
@@ -524,4 +534,13 @@ pub fn setCommonOpts(self: *Self) !void {
     }
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_TIMEOUT_MS, self.timeout_ms), &self.diagnostics);
     try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_USERAGENT, self.user_agent.ptr), &self.diagnostics);
+}
+
+test "Easy: reset preserves default_timeout_ms" {
+    var easy = try Self.init(.{ .default_timeout_ms = 30_000 });
+    defer easy.deinit();
+
+    try std.testing.expectEqual(@as(usize, 30_000), easy.timeout_ms);
+    easy.reset();
+    try std.testing.expectEqual(@as(usize, 30_000), easy.timeout_ms);
 }

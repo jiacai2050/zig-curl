@@ -38,6 +38,8 @@ pub const Diagnostics = struct {
         code: c.CURLcode,
         /// https://curl.se/libcurl/c/libcurl-errors.html#CURLMcode
         m_code: c.CURLMcode,
+        /// https://curl.se/libcurl/c/libcurl-errors.html#CURLSHcode
+        sh_code: c.CURLSHcode,
     } = null,
 
     /// Returns a human-readable error message based on the error code.
@@ -46,6 +48,7 @@ pub const Diagnostics = struct {
         return switch (error_code) {
             .code => |code| std.mem.span(c.curl_easy_strerror(code)),
             .m_code => |m_code| std.mem.span(c.curl_multi_strerror(m_code)),
+            .sh_code => |sh_code| std.mem.span(c.curl_share_strerror(sh_code)),
         };
     }
 };
@@ -66,6 +69,16 @@ pub fn checkMCode(code: c.CURLMcode, diagnostics: ?*Diagnostics) !void {
     }
 
     if (diagnostics) |diag| diag.error_code = .{ .m_code = code };
+
+    return error.Curl;
+}
+
+pub fn checkSHCode(code: c.CURLSHcode, diagnostics: ?*Diagnostics) !void {
+    if (code == c.CURLSHE_OK) {
+        return;
+    }
+
+    if (diagnostics) |diag| diag.error_code = .{ .sh_code = code };
 
     return error.Curl;
 }

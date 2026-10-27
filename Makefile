@@ -13,6 +13,7 @@ run:
 	zig build run-advanced -freference-trace $(ARGS)
 	zig build run-multi -freference-trace $(ARGS)
 	zig build run-header -freference-trace $(ARGS)
+	zig build run-client -freference-trace $(ARGS)
 
 fix:
 	zig fmt  .

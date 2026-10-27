@@ -6,7 +6,7 @@ const Allocator = std.mem.Allocator;
 const SanitizeC = std.zig.SanitizeC;
 
 const MODULE_NAME = "curl";
-const EXAMPLE_NAMES = .{ "basic", "post", "upload", "advanced", "multi", "header" };
+const EXAMPLE_NAMES = .{ "basic", "post", "upload", "advanced", "multi", "header", "client" };
 
 pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
