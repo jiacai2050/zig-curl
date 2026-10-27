@@ -58,7 +58,7 @@ pub fn main(init: std.process.Init) !void {
     // =========================================================================
     std.debug.print("=== 1. Strongly-Typed JSON Deserialization (res.json(T)) ===\n", .{});
     {
-        var res = try client.get(BASE_URL ++ "/ipgeo")
+        var res = try client.get(BASE_URL ++ "/ip")
             .headers(&.{.{ .name = "Accept", .value = "application/json" }})
             .timeout(15000)
             .send(io);

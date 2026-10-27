@@ -1,6 +1,6 @@
 #+TITLE: zig-curl
 #+DATE: 2023-09-16T23:16:15+0800
-#+LASTMOD: 2026-10-05T15:14:08+0800
+#+LASTMOD: 2026-10-27T19:07:08+0800
 #+OPTIONS: toc:nil num:nil
 #+STARTUP: content
 
@@ -66,6 +66,48 @@ pub fn main(init: std.process.Init) !void {
 #+end_src
 
 Check [[file:examples]] for more examples.
+
+** AsyncClient
+=AsyncClient= provides an asynchronous, non-blocking HTTP client with a fluent Request Builder interface (inspired by Rust's =reqwest=). It integrates natively with Zig 0.17's =std.Io= concurrency model while automatically sharing DNS cache and TLS connections across requests.
+
+#+begin_src zig
+const std = @import("std");
+const curl = @import("curl");
+
+pub fn main(init: std.process.Init) !void {
+    var gpa: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
+    defer if (gpa.deinit() != .ok) @panic("leak");
+    const allocator = gpa.allocator();
+
+    // 1. Initialize client (automatically loads system CA bundle & shares DNS/SSL cache)
+    var client = try curl.AsyncClient.init(allocator, init.io, .{});
+    defer client.deinit();
+
+    // 2. Fluent GET request
+    var res = try client.get("https://edgebin.liujiacai.net/ip")
+        .headers(&.{.{ .name = "Accept", .value = "application/json" }})
+        .timeout(10000)
+        .send(init.io);
+    defer res.deinit();
+
+    std.debug.print("Status: {d}\n", .{res.status_code});
+
+    // 3. Strongly-typed JSON deserialization directly from response
+    const IpGeo = struct { origin: []const u8, country: []const u8 };
+    const parsed = try res.json(IpGeo, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+    std.debug.print("IP: {s}, Country: {s}\n", .{ parsed.value.origin, parsed.value.country });
+
+    // 4. Asynchronous POST with body
+    var post_res = try client.post("https://edgebin.liujiacai.net/anything")
+        .headers(&.{.{ .name = "Content-Type", .value = "application/json" }})
+        .body("{\"message\": \"hello zig-curl\"}")
+        .send(init.io);
+    defer post_res.deinit();
+}
+#+end_src
+
+For concurrent requests using =std.Io.Group=, Bearer authentication, and advanced pipeline patterns, see [[file:examples/async.zig][examples/async.zig]].
 
 ** Diagnostics
 When a curl operation fails, it returns a generic =error.Curl=. To get more detailed information, you can use the =diagnostics= field in =Easy= or =Multi=.
