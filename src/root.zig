@@ -20,9 +20,9 @@
 //! - **Zero-CPU Idle Reactor**: The dedicated background driver thread auto-adapts its polling timeout
 //!   and sleeps during idle periods, responding instantly to new requests via `curl_multi_wakeup`.
 //! - **Rich Ergonomics**: Fluent builder pattern, structured headers, custom timeouts,
-//!   buffered response body with custom writers, and strongly-typed JSON deserialization directly from `Response`.
+//!   streaming response bodies (`sendStreaming(io)` via standard `std.Io.Reader`), and strongly-typed JSON deserialization.
 //!
-//! **Example Usage**:
+//! **Example Usage (Buffered & Streaming)**:
 //! ```zig
 //! const std = @import("std");
 //! const curl = @import("curl");
@@ -35,7 +35,7 @@
 //!     });
 //!     defer client.deinit();
 //!
-//!     // 2. Build and execute request asynchronously
+//!     // 2. Build and execute request asynchronously (buffered body)
 //!     var res = try client.get("https://api.example.com/user/123")
 //!         .headers(&.{
 //!             .{ .name = "Accept", .value = "application/json" },
@@ -50,6 +50,14 @@
 //!     const parsed = try res.json(User, .{});
 //!     defer parsed.deinit();
 //!     std.debug.print("User: {s}\n", .{parsed.value.name});
+//!
+//!     // 4. Or stream large response bodies incrementally with zero memory bloat
+//!     var stream_res = try client.get("https://api.example.com/stream").sendStreaming(io);
+//!     defer stream_res.deinit();
+//!     var reader = stream_res.reader();
+//!     while (try reader.interface.takeDelimiter('\n')) |line| {
+//!         std.debug.print("Streamed line: {s}\n", .{line});
+//!     }
 //! }
 //! ```
 //!
@@ -109,6 +117,8 @@ pub const MultiPart = @import("MultiPart.zig");
 pub const Share = @import("Share.zig");
 pub const Client = @import("Client.zig");
 pub const Response = Client.Response;
+pub const StreamingResponse = Client.StreamingResponse;
+pub const BodyReader = Client.BodyReader;
 pub const RequestBuilder = Client.RequestBuilder;
 
 pub const printLibcurlVersion = util.printLibcurlVersion;
@@ -139,4 +149,98 @@ pub fn globalDeinit() void {
 
 test {
     std.testing.refAllDecls(@This());
+}
+
+test "root: documentation fetchUser snippet compilable and functional" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Local mock server for buffered JSON response
+    const addr1 = std.Io.net.IpAddress{ .ip4 = std.Io.net.Ip4Address.loopback(0) };
+    var s1 = try addr1.listen(io, .{ .mode = .stream });
+    const p1 = s1.socket.address.getPort();
+
+    const ServerContext = struct {
+        server: std.Io.net.Server,
+        io: std.Io,
+        payload: []const u8,
+
+        fn run(ctx: @This()) void {
+            var s = ctx.server;
+            defer s.deinit(ctx.io);
+
+            const stream = s.accept(ctx.io) catch return;
+            defer stream.close(ctx.io);
+
+            var read_buf: [4096]u8 = undefined;
+            var reader = std.Io.net.Stream.Reader.init(stream, ctx.io, &read_buf);
+            var write_buf: [4096]u8 = undefined;
+            var writer = std.Io.net.Stream.Writer.init(stream, ctx.io, &write_buf);
+
+            var http_server = std.http.Server.init(&reader.interface, &writer.interface);
+            var req = http_server.receiveHead() catch return;
+            req.respond(ctx.payload, .{ .status = .ok, .keep_alive = false }) catch return;
+        }
+    };
+
+    const t1 = try std.Thread.spawn(.{}, ServerContext.run, .{ServerContext{
+        .server = s1,
+        .io = io,
+        .payload = "{\"id\":123,\"name\":\"Alice\"}",
+    }});
+    defer t1.join();
+
+    // Local mock server for streaming response
+    const addr2 = std.Io.net.IpAddress{ .ip4 = std.Io.net.Ip4Address.loopback(0) };
+    var s2 = try addr2.listen(io, .{ .mode = .stream });
+    const p2 = s2.socket.address.getPort();
+
+    const t2 = try std.Thread.spawn(.{}, ServerContext.run, .{ServerContext{
+        .server = s2,
+        .io = io,
+        .payload = "line1\nline2\n",
+    }});
+    defer t2.join();
+
+    // 1. Initialize client (shares connections, spawns background event driver)
+    var client = try Client.init(allocator, io, .{
+        .share_dns = true,
+        .load_ca_bundle = false,
+        .max_concurrency = 100, // Optional semaphore throttling
+    });
+    defer client.deinit();
+
+    const url1 = try allocator.printSentinel("http://127.0.0.1:{d}/user/123", .{p1}, 0);
+    defer allocator.free(url1);
+
+    // 2. Build and execute request asynchronously (buffered body)
+    var res = try client.get(url1)
+        .headers(&.{
+            .{ .name = "Accept", .value = "application/json" },
+            .{ .name = "Authorization", .value = "Bearer my-secret-token" },
+        })
+        .timeout(5000)
+        .send(io);
+    defer res.deinit();
+
+    // 3. Strongly-typed JSON deserialization
+    const User = struct { id: u64, name: []const u8 };
+    const parsed = try res.json(User, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("Alice", parsed.value.name);
+
+    // 4. Or stream large response bodies incrementally with zero memory bloat
+    const url2 = try allocator.printSentinel("http://127.0.0.1:{d}/stream", .{p2}, 0);
+    defer allocator.free(url2);
+
+    var stream_res = try client.get(url2).sendStreaming(io);
+    defer stream_res.deinit();
+    var reader = stream_res.reader();
+    var count: usize = 0;
+    while (try reader.interface.takeDelimiter('\n')) |line| {
+        if (count == 0) try std.testing.expectEqualStrings("line1", line);
+        if (count == 1) try std.testing.expectEqualStrings("line2", line);
+        count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), count);
 }

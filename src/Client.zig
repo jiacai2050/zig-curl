@@ -140,6 +140,9 @@ queue_mutex: SpinLock = .{},
 pending_queue: ?*RequestContext = null,
 active_list: ?*RequestContext = null,
 
+stream_mutex: SpinLock = .{},
+stream_list: ?*StreamContext = null,
+
 pub const HeaderEntry = struct {
     name: []const u8,
     value: []const u8,
@@ -170,11 +173,269 @@ pub const RequestContext = struct {
     event: std.Io.Event = .unset,
     result: c.CURLcode = c.CURLE_OK,
     response_code: c_long = 0,
-    body_writer: std.Io.Writer.Allocating,
+    body_writer: ?std.Io.Writer.Allocating = null,
     c_headers: ?*c.struct_curl_slist = null,
     next: ?*RequestContext = null,
     active_next: ?*RequestContext = null,
     active_prev: ?*RequestContext = null,
+    stream: ?*StreamContext = null,
+};
+
+pub const BodyReader = struct {
+    stream: *StreamContext,
+    interface: std.Io.Reader,
+    err: ?anyerror = null,
+
+    pub fn init(stream: *StreamContext, buffer: []u8) BodyReader {
+        return .{
+            .stream = stream,
+            .interface = .{
+                .vtable = &.{
+                    .stream = streamImpl,
+                    .readVec = readVec,
+                },
+                .buffer = buffer,
+                .seek = 0,
+                .end = 0,
+            },
+            .err = null,
+        };
+    }
+
+    fn streamImpl(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const dest = limit.slice(try io_w.writableSliceGreedy(1));
+        var data: [1][]u8 = .{dest};
+        const n = try readVec(io_r, &data);
+        io_w.advance(n);
+        return n;
+    }
+
+    fn readVec(io_r: *std.Io.Reader, data: [][]u8) std.Io.Reader.Error!usize {
+        const self: *BodyReader = @alignCast(@fieldParentPtr("interface", io_r));
+        var iovecs_buffer: [8][]u8 = undefined;
+        const dest_n, const data_size = try io_r.writableVector(&iovecs_buffer, data);
+        const dest = iovecs_buffer[0..dest_n];
+        if (dest.len == 0 or dest[0].len == 0) return 0;
+
+        var total_read: usize = 0;
+        for (dest) |buf| {
+            const n = self.stream.readBytes(buf) catch |err| {
+                self.err = err;
+                return error.ReadFailed;
+            };
+            total_read += n;
+            if (n < buf.len) break;
+        }
+
+        if (total_read == 0) {
+            return error.EndOfStream;
+        }
+        if (total_read > data_size) {
+            io_r.end += total_read - data_size;
+            return data_size;
+        }
+        return total_read;
+    }
+
+    /// Read bytes directly into caller provided slice dest.
+    /// Returns number of bytes read, or 0 on EOF.
+    pub fn read(self: *BodyReader, dest: []u8) !usize {
+        return self.stream.readBytes(dest);
+    }
+
+    /// Returns the underlying failure reason if a stream error occurred (e.g. error.Timeout).
+    pub fn errorReason(self: *const BodyReader) ?anyerror {
+        return self.err orelse self.stream.err;
+    }
+
+    /// Read all remaining bytes from the stream into a dynamically allocated buffer.
+    pub fn readAllAlloc(self: *BodyReader, allocator: Allocator, max_size: usize) ![]u8 {
+        var list: std.ArrayList(u8) = .empty;
+        errdefer list.deinit(allocator);
+
+        var buf: [4096]u8 = undefined;
+        while (true) {
+            const n = try self.read(&buf);
+            if (n == 0) break;
+            if (list.items.len + n > max_size) return error.StreamTooLong;
+            try list.appendSlice(allocator, buf[0..n]);
+        }
+        return list.toOwnedSlice(allocator);
+    }
+};
+
+pub const StreamingResponse = struct {
+    client: *Self,
+    status_code: u16,
+    stream: ?*StreamContext = null,
+    semaphore_held: bool = false,
+    reader_buf: [4096]u8 = undefined,
+
+    pub fn reader(self: *StreamingResponse) BodyReader {
+        const stream = self.stream orelse @panic("StreamingResponse used after deinit");
+        return BodyReader.init(stream, &self.reader_buf);
+    }
+
+    pub fn deinit(self: *StreamingResponse) void {
+        const stream = self.stream orelse return;
+        self.stream = null;
+
+        const client_alive = stream.client_alive.load(.acquire);
+
+        if (client_alive) {
+            const client = self.client;
+            if (self.semaphore_held) {
+                if (client.semaphore) |*sem| {
+                    sem.post(stream.req.io);
+                }
+                self.semaphore_held = false;
+            }
+
+            stream.mutex.lock();
+            const is_done = stream.eof;
+            stream.mutex.unlock();
+
+            if (!is_done) {
+                stream.aborted.store(true, .release);
+                client.idle_event.set(client.io);
+                _ = c.curl_multi_wakeup(client.multi);
+            }
+        }
+
+        stream.releaseRef();
+    }
+};
+
+pub const StreamContext = struct {
+    req: RequestContext,
+    client: *Self,
+    allocator: Allocator,
+    client_alive: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
+    ref_count: std.atomic.Value(u32),
+    stream_prev: ?*StreamContext = null,
+    stream_next: ?*StreamContext = null,
+    mutex: SpinLock = .{},
+    header_event: std.Io.Event = .unset,
+    read_event: std.Io.Event = .unset,
+    headers_ready: bool = false,
+    eof: bool = false,
+    aborted: std.atomic.Value(bool),
+    err: ?anyerror = null,
+    paused: bool = false,
+    unpause_requested: std.atomic.Value(bool),
+    is_tainted: bool = false,
+    follow_location: bool = true,
+
+    ring_buffer: []u8,
+    ring_head: usize = 0,
+    ring_tail: usize = 0,
+    ring_count: usize = 0,
+
+    fn onTransferDone(self: *StreamContext, result: c.CURLcode) void {
+        self.mutex.lock();
+        self.req.result = result;
+
+        if (!self.headers_ready) {
+            self.headers_ready = true;
+            self.header_event.set(self.req.io);
+        }
+
+        self.eof = true;
+        if (result != c.CURLE_OK) {
+            if (result == c.CURLE_OPERATION_TIMEDOUT) {
+                self.err = error.Timeout;
+            } else {
+                self.err = error.HttpTransferFailed;
+            }
+        }
+        self.read_event.set(self.req.io);
+        self.mutex.unlock();
+
+        self.releaseRef();
+    }
+
+    fn releaseRef(self: *StreamContext) void {
+        if (self.ref_count.fetchSub(1, .acq_rel) == 1) {
+            const allocator = self.allocator;
+            const easy = self.req.easy;
+            const is_tainted = self.is_tainted;
+            const client_alive = self.client_alive.load(.acquire);
+
+            if (client_alive) {
+                const client = self.client;
+                client.stream_mutex.lock();
+                if (self.stream_prev) |prev| {
+                    prev.stream_next = self.stream_next;
+                } else {
+                    client.stream_list = self.stream_next;
+                }
+                if (self.stream_next) |next| {
+                    next.stream_prev = self.stream_prev;
+                }
+                client.stream_mutex.unlock();
+            }
+
+            if (self.req.c_headers) |h| {
+                c.curl_slist_free_all(h);
+                self.req.c_headers = null;
+            }
+
+            allocator.free(self.ring_buffer);
+
+            if (client_alive and !is_tainted) {
+                self.client.releaseHandle(easy, false);
+            } else {
+                easy.deinit();
+                allocator.destroy(easy);
+            }
+
+            allocator.destroy(self);
+        }
+    }
+
+    fn readBytes(self: *StreamContext, dest: []u8) !usize {
+        if (dest.len == 0) return 0;
+
+        while (true) {
+            self.mutex.lock();
+
+            if (self.ring_count > 0) {
+                const to_copy = @min(dest.len, self.ring_count);
+                var i: usize = 0;
+                while (i < to_copy) : (i += 1) {
+                    dest[i] = self.ring_buffer[(self.ring_head + i) % self.ring_buffer.len];
+                }
+                self.ring_head = (self.ring_head + to_copy) % self.ring_buffer.len;
+                self.ring_count -= to_copy;
+
+                if (self.paused and !self.unpause_requested.load(.acquire)) {
+                    const free_space = self.ring_buffer.len - self.ring_count;
+                    if (free_space >= 16384) {
+                        self.unpause_requested.store(true, .release);
+                        if (self.client_alive.load(.acquire)) {
+                            self.client.idle_event.set(self.client.io);
+                            assert(c.curl_multi_wakeup(self.client.multi) == c.CURLM_OK);
+                        }
+                    }
+                }
+
+                self.read_event.reset();
+                self.mutex.unlock();
+
+                return to_copy;
+            }
+
+            if (self.eof) {
+                const err = self.err;
+                self.mutex.unlock();
+                if (err) |e| return e;
+                return 0; // EOF
+            }
+
+            self.mutex.unlock();
+            self.read_event.waitUncancelable(self.req.io);
+        }
+    }
 };
 
 const HandlePool = struct {
@@ -283,6 +544,16 @@ pub fn deinit(self: *Self) void {
     assert(wakeup_rc == c.CURLM_OK);
     self.driver_thread.join();
 
+    // Mark all active/orphaned streams so they won't touch client after destruction
+    self.stream_mutex.lock();
+    var curr_stream = self.stream_list;
+    while (curr_stream) |stream| {
+        stream.client_alive.store(false, .release);
+        curr_stream = stream.stream_next;
+    }
+    self.stream_list = null;
+    self.stream_mutex.unlock();
+
     self.pool.deinit(self.allocator);
     const cleanup_rc = c.curl_multi_cleanup(self.multi);
     assert(cleanup_rc == c.CURLM_OK);
@@ -373,9 +644,141 @@ fn releaseHandle(self: *Self, easy: *Easy, is_tainted: bool) void {
     }
 }
 
+fn maintainActiveStreams(self: *Self) void {
+    var curr = self.active_list;
+    while (curr) |ctx| {
+        const next = ctx.active_next;
+        if (ctx.stream) |stream| {
+            if (stream.aborted.load(.acquire)) {
+                // Aborted by caller: unlink from active_list and remove from multi
+                if (ctx.active_prev) |prev| {
+                    prev.active_next = ctx.active_next;
+                } else {
+                    self.active_list = ctx.active_next;
+                }
+                if (ctx.active_next) |act_next| {
+                    act_next.active_prev = ctx.active_prev;
+                }
+                ctx.active_prev = null;
+                ctx.active_next = null;
+
+                const remove_rc = c.curl_multi_remove_handle(self.multi, ctx.easy.handle);
+                assert(remove_rc == c.CURLM_OK);
+                if (ctx.c_headers) |h| {
+                    c.curl_slist_free_all(h);
+                    ctx.c_headers = null;
+                }
+
+                stream.mutex.lock();
+                stream.eof = true;
+                stream.read_event.set(ctx.io);
+                stream.mutex.unlock();
+
+                stream.releaseRef();
+            } else if (stream.unpause_requested.load(.acquire)) {
+                stream.unpause_requested.store(false, .release);
+                // curl_easy_pause may synchronously flush internal buffers and re-enter streamWriteCallback,
+                // so it must be executed WITHOUT holding stream.mutex to prevent recursive SpinLock deadlock.
+                stream.mutex.lock();
+                const was_paused = stream.paused;
+                stream.paused = false;
+                stream.mutex.unlock();
+                if (was_paused) {
+                    const rc = c.curl_easy_pause(ctx.easy.handle, c.CURLPAUSE_CONT);
+                    assert(rc == c.CURLE_OK);
+                }
+            }
+        }
+        curr = next;
+    }
+}
+
+fn streamHeaderCallback(
+    ptr: [*c]c_char,
+    size: c_uint,
+    nmemb: c_uint,
+    user_data: ?*anyopaque,
+) callconv(.c) c_uint {
+    const total_bytes: usize = @as(usize, size) * @as(usize, nmemb);
+    if (total_bytes == 0) return 0;
+    const stream: *StreamContext = @ptrCast(@alignCast(user_data.?));
+
+    const bytes: [*]const u8 = @ptrCast(ptr);
+    const line = bytes[0..total_bytes];
+
+    if ((line.len == 2 and line[0] == '\r' and line[1] == '\n') or
+        (line.len == 1 and line[0] == '\n'))
+    {
+        var code: c_long = 0;
+        _ = c.curl_easy_getinfo(stream.req.easy.handle, c.CURLINFO_RESPONSE_CODE, &code);
+
+        const is_redirect = (code >= 300 and code < 400 and stream.follow_location);
+        const is_informational = (code >= 100 and code < 200);
+
+        if (!is_redirect and !is_informational) {
+            stream.mutex.lock();
+            if (!stream.headers_ready) {
+                stream.req.response_code = code;
+                stream.headers_ready = true;
+                stream.header_event.set(stream.req.io);
+            }
+            stream.mutex.unlock();
+        }
+    }
+
+    return @intCast(total_bytes);
+}
+
+fn streamWriteCallback(
+    ptr: [*c]c_char,
+    size: c_uint,
+    nmemb: c_uint,
+    user_data: ?*anyopaque,
+) callconv(.c) c_uint {
+    const total_bytes: usize = @as(usize, size) * @as(usize, nmemb);
+    if (total_bytes == 0) return 0;
+    const stream: *StreamContext = @ptrCast(@alignCast(user_data.?));
+
+    stream.mutex.lock();
+
+    if (!stream.headers_ready) {
+        var code: c_long = 0;
+        _ = c.curl_easy_getinfo(stream.req.easy.handle, c.CURLINFO_RESPONSE_CODE, &code);
+        stream.req.response_code = code;
+        stream.headers_ready = true;
+        stream.header_event.set(stream.req.io);
+    }
+
+    if (stream.aborted.load(.acquire)) {
+        stream.mutex.unlock();
+        return @intCast(c.CURL_WRITEFUNC_PAUSE);
+    }
+
+    const available = stream.ring_buffer.len - stream.ring_count;
+    if (available < total_bytes) {
+        stream.paused = true;
+        stream.mutex.unlock();
+        return @intCast(c.CURL_WRITEFUNC_PAUSE);
+    }
+
+    const bytes: [*]const u8 = @ptrCast(ptr);
+    var i: usize = 0;
+    while (i < total_bytes) : (i += 1) {
+        stream.ring_buffer[(stream.ring_tail + i) % stream.ring_buffer.len] = bytes[i];
+    }
+    stream.ring_tail = (stream.ring_tail + total_bytes) % stream.ring_buffer.len;
+    stream.ring_count += total_bytes;
+
+    stream.read_event.set(stream.req.io);
+    stream.mutex.unlock();
+
+    return @intCast(total_bytes);
+}
+
 fn driverLoop(self: *Self) void {
     while (self.running.load(.acquire)) {
         self.drainPendingQueue();
+        self.maintainActiveStreams();
 
         if (self.active_list == null) {
             // Idle state: no active network transfers in flight.
@@ -393,6 +796,8 @@ fn driverLoop(self: *Self) void {
         const poll_rc = c.curl_multi_poll(self.multi, null, 0, 1000, &num_fds);
         assert(poll_rc == c.CURLM_OK);
 
+        self.maintainActiveStreams();
+
         var still_running: c_int = 0;
         const perform_rc = c.curl_multi_perform(self.multi, &still_running);
         assert(perform_rc == c.CURLM_OK);
@@ -402,9 +807,11 @@ fn driverLoop(self: *Self) void {
 
     // Drain remaining transfers on shutdown with bounded iterations (max ~5s)
     self.drainPendingQueue();
+    self.maintainActiveStreams();
     var still_running: c_int = 1;
     var drain_iters: usize = 0;
     while (still_running > 0 and drain_iters < 100) : (drain_iters += 1) {
+        self.maintainActiveStreams();
         const drain_perform_rc = c.curl_multi_perform(self.multi, &still_running);
         assert(drain_perform_rc == c.CURLM_OK);
         self.processDoneTransfers();
@@ -419,12 +826,20 @@ fn driverLoop(self: *Self) void {
         const next = ctx.active_next;
         const remove_rc = c.curl_multi_remove_handle(self.multi, ctx.easy.handle);
         assert(remove_rc == c.CURLM_OK);
+        // Explicitly detach easy handle from CURLSH to prevent CURLSHE_IN_USE panic in self.share.deinit()
+        _ = c.curl_easy_setopt(ctx.easy.handle, c.CURLOPT_SHARE, @as(?*anyopaque, null));
         ctx.result = c.CURLE_ABORTED_BY_CALLBACK;
         if (ctx.c_headers) |h| {
             c.curl_slist_free_all(h);
             ctx.c_headers = null;
         }
-        ctx.event.set(ctx.io);
+        if (ctx.stream) |stream| {
+            stream.client_alive.store(false, .release);
+            stream.is_tainted = true;
+            stream.onTransferDone(ctx.result);
+        } else {
+            ctx.event.set(ctx.io);
+        }
         curr_active = next;
     }
     self.active_list = null;
@@ -436,12 +851,19 @@ fn driverLoop(self: *Self) void {
     self.queue_mutex.unlock();
     while (unhandled) |ctx| {
         const next = ctx.next;
+        _ = c.curl_easy_setopt(ctx.easy.handle, c.CURLOPT_SHARE, @as(?*anyopaque, null));
         ctx.result = c.CURLE_ABORTED_BY_CALLBACK;
         if (ctx.c_headers) |h| {
             c.curl_slist_free_all(h);
             ctx.c_headers = null;
         }
-        ctx.event.set(ctx.io);
+        if (ctx.stream) |stream| {
+            stream.client_alive.store(false, .release);
+            stream.is_tainted = true;
+            stream.onTransferDone(ctx.result);
+        } else {
+            ctx.event.set(ctx.io);
+        }
         unhandled = next;
     }
 }
@@ -457,7 +879,15 @@ fn drainPendingQueue(self: *Self) void {
         const rc = c.curl_multi_add_handle(self.multi, ctx.easy.handle);
         if (rc != c.CURLM_OK) {
             ctx.result = c.CURLE_FAILED_INIT;
-            ctx.event.set(ctx.io);
+            if (ctx.c_headers) |h| {
+                c.curl_slist_free_all(h);
+                ctx.c_headers = null;
+            }
+            if (ctx.stream) |stream| {
+                stream.onTransferDone(ctx.result);
+            } else {
+                ctx.event.set(ctx.io);
+            }
         } else {
             ctx.active_next = self.active_list;
             ctx.active_prev = null;
@@ -516,8 +946,13 @@ fn processDoneTransfers(self: *Self) void {
                     ctx.c_headers = null;
                 }
 
-                // Notify waiting fiber/thread
-                ctx.event.set(ctx.io);
+                if (ctx.stream) |stream| {
+                    _ = c.curl_easy_setopt(easy_handle, c.CURLOPT_SHARE, @as(?*anyopaque, null));
+                    stream.onTransferDone(ctx.result);
+                } else {
+                    // Notify waiting fiber/thread
+                    ctx.event.set(ctx.io);
+                }
             }
         }
     }
@@ -633,7 +1068,7 @@ pub const RequestBuilder = struct {
             .body_writer = std.Io.Writer.Allocating.init(client.allocator),
             .c_headers = null,
         };
-        errdefer context.body_writer.deinit();
+        errdefer if (context.body_writer) |*bw| bw.deinit();
 
         try easy.setUrl(self.url);
         try easy.setMethod(self.method);
@@ -643,7 +1078,7 @@ pub const RequestBuilder = struct {
                 &easy.diagnostics,
             );
         }
-        try easy.setWriter(&context.body_writer.writer);
+        try easy.setWriter(&context.body_writer.?.writer);
         try easy.setFollowLocation(self.follow_location);
 
         if (self.timeout_ms) |ms| {
@@ -722,7 +1157,171 @@ pub const RequestBuilder = struct {
         return Response{
             .allocator = client.allocator,
             .status_code = @intCast(context.response_code),
-            .body = try context.body_writer.toOwnedSlice(),
+            .body = try context.body_writer.?.toOwnedSlice(),
+        };
+    }
+
+    /// Send the HTTP request and return a StreamingResponse as soon as headers are received.
+    /// The response body can then be read incrementally via res.reader().
+    ///
+    /// Lifetime contract: The returned `StreamingResponse` must be closed (via `res.deinit()`)
+    /// before `client.deinit()` is called, as the active stream borrows internal resources (easy handle,
+    /// connection share context, and semaphore permits) from the `Client`.
+    pub fn sendStreaming(self: RequestBuilder, io: std.Io) !StreamingResponse {
+        const client = self.client;
+
+        if (client.semaphore) |*sem| {
+            try sem.wait(io);
+        }
+        var sem_released = false;
+        errdefer if (client.semaphore) |*sem| {
+            if (!sem_released) sem.post(io);
+        };
+
+        const easy = if (self.is_tainted)
+            try client.createFreshHandle()
+        else
+            try client.acquireHandle();
+
+        var easy_released = false;
+        errdefer if (!easy_released) client.releaseHandle(easy, self.is_tainted);
+
+        var stream_released = false;
+        const stream = try client.allocator.create(StreamContext);
+        errdefer if (!stream_released) client.allocator.destroy(stream);
+
+        const ring_buffer = try client.allocator.alloc(u8, 64 * 1024);
+        errdefer if (!stream_released) client.allocator.free(ring_buffer);
+
+        stream.* = .{
+            .req = .{
+                .io = io,
+                .easy = easy,
+                .body_writer = null,
+                .c_headers = null,
+                .stream = stream,
+            },
+            .client = client,
+            .allocator = client.allocator,
+            .client_alive = std.atomic.Value(bool).init(true),
+            .ref_count = std.atomic.Value(u32).init(2),
+            .is_tainted = self.is_tainted,
+            .follow_location = self.follow_location,
+            .ring_buffer = ring_buffer,
+            .aborted = std.atomic.Value(bool).init(false),
+            .unpause_requested = std.atomic.Value(bool).init(false),
+        };
+
+        try easy.setUrl(self.url);
+        try easy.setMethod(self.method);
+        if (self.method == .HEAD) {
+            try checkCode(
+                c.curl_easy_setopt(easy.handle, c.CURLOPT_NOBODY, @as(c_long, 1)),
+                &easy.diagnostics,
+            );
+        }
+        try easy.setFollowLocation(self.follow_location);
+
+        if (self.timeout_ms) |ms| {
+            easy.timeout_ms = ms;
+        }
+        if (self.http_version) |ver| {
+            try easy.setHttpVersion(ver);
+        }
+        if (self.unix_socket_path) |path| {
+            try easy.setUnixSocketPath(path);
+        }
+        if (self.body_data) |b| {
+            try easy.setPostFields(b);
+        }
+
+        // Custom headers
+        if (self.custom_headers.len > 0) {
+            var ch: ?*c.struct_curl_slist = null;
+            errdefer if (ch) |h| c.curl_slist_free_all(h);
+            for (self.custom_headers) |h| {
+                const line = try client.allocator.printSentinel(
+                    "{s}: {s}",
+                    .{ h.name, h.value },
+                    0,
+                );
+                defer client.allocator.free(line);
+                ch = c.curl_slist_append(ch, line.ptr) orelse return error.OutOfMemory;
+            }
+            stream.req.c_headers = ch;
+            ch = null;
+            if (stream.req.c_headers) |headers_list| {
+                try easy.setHeadersC(headers_list);
+            }
+        }
+        errdefer if (!stream_released) {
+            if (stream.req.c_headers) |h| {
+                c.curl_slist_free_all(h);
+                stream.req.c_headers = null;
+            }
+        };
+
+        try easy.setCommonOpts();
+
+        if (self.config_hook) |hook| {
+            try hook(easy);
+        }
+
+        try checkCode(c.curl_easy_setopt(easy.handle, c.CURLOPT_WRITEFUNCTION, streamWriteCallback), &easy.diagnostics);
+        try checkCode(c.curl_easy_setopt(easy.handle, c.CURLOPT_WRITEDATA, stream), &easy.diagnostics);
+        try checkCode(c.curl_easy_setopt(easy.handle, c.CURLOPT_HEADERFUNCTION, streamHeaderCallback), &easy.diagnostics);
+        try checkCode(c.curl_easy_setopt(easy.handle, c.CURLOPT_HEADERDATA, stream), &easy.diagnostics);
+
+        try easy.setPrivate(&stream.req);
+
+        // Register stream in client's active stream tracking list
+        {
+            client.stream_mutex.lock();
+            stream.stream_next = client.stream_list;
+            stream.stream_prev = null;
+            if (client.stream_list) |s_head| {
+                s_head.stream_prev = stream;
+            }
+            client.stream_list = stream;
+            client.stream_mutex.unlock();
+        }
+
+        // Enqueue to pending queue and wake driver
+        {
+            client.queue_mutex.lock();
+            stream.req.next = client.pending_queue;
+            client.pending_queue = &stream.req;
+            client.queue_mutex.unlock();
+        }
+
+        client.idle_event.set(client.io);
+        const wakeup_rc = c.curl_multi_wakeup(client.multi);
+        assert(wakeup_rc == c.CURLM_OK);
+
+        // Wait until headers are received or transfer fails
+        stream.header_event.waitUncancelable(io);
+
+        if (stream.req.result != c.CURLE_OK) {
+            const result = stream.req.result;
+            stream_released = true;
+            easy_released = true;
+            stream.releaseRef();
+            if (client.semaphore) |*sem| {
+                sem.post(io);
+                sem_released = true;
+            }
+            if (result == c.CURLE_OPERATION_TIMEDOUT) {
+                return error.Timeout;
+            }
+            return error.HttpTransferFailed;
+        }
+
+        stream_released = true;
+        return StreamingResponse{
+            .client = client,
+            .status_code = @intCast(stream.req.response_code),
+            .stream = stream,
+            .semaphore_held = client.semaphore != null,
         };
     }
 };
@@ -1050,4 +1649,659 @@ test "Client: shutdown drain cleans up in-flight requests without hanging" {
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
+}
+
+test "Client: sendStreaming reads entire body via reader" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const payload = "Hello, streaming world! This is a test chunked response.";
+    const s = try startMockServer(io, payload);
+    defer s.thread.join();
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
+
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
+    defer allocator.free(url);
+
+    var res = try client.get(url).timeout(3000).sendStreaming(io);
+    defer res.deinit();
+
+    try std.testing.expectEqual(@as(u16, 200), res.status_code);
+
+    var reader = res.reader();
+    const body = try reader.readAllAlloc(allocator, 1024 * 1024);
+    defer allocator.free(body);
+
+    try std.testing.expectEqualStrings(payload, body);
+}
+
+test "Client: sendStreaming integrates with std.Io.Reader line delimiter" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const payload = "line1\nline2\nline3\n";
+    const s = try startMockServer(io, payload);
+    defer s.thread.join();
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
+
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
+    defer allocator.free(url);
+
+    var res = try client.get(url).timeout(3000).sendStreaming(io);
+    defer res.deinit();
+
+    try std.testing.expectEqual(@as(u16, 200), res.status_code);
+
+    var reader = res.reader();
+    const l1 = (try reader.interface.takeDelimiter('\n')).?;
+    try std.testing.expectEqualStrings("line1", l1);
+    const l2 = (try reader.interface.takeDelimiter('\n')).?;
+    try std.testing.expectEqualStrings("line2", l2);
+    const l3 = (try reader.interface.takeDelimiter('\n')).?;
+    try std.testing.expectEqualStrings("line3", l3);
+}
+
+test "Client: sendStreaming early deinit cancels in-flight transfer without leak" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const payload = "Some data that we only partially read";
+    const s = try startMockServer(io, payload);
+    defer s.thread.join();
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
+
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
+    defer allocator.free(url);
+
+    var res = try client.get(url).timeout(3000).sendStreaming(io);
+    var reader = res.reader();
+    var small_buf: [4]u8 = undefined;
+    const n = try reader.read(&small_buf);
+    try std.testing.expect(n > 0);
+
+    // Drop res early while transfer is still active on server/driver
+    res.deinit();
+}
+
+fn startStreamingBytesServer(
+    io: std.Io,
+    total_bytes: usize,
+    chunk_byte: u8,
+) !struct { thread: std.Thread, port: u16 } {
+    const addr = std.Io.net.IpAddress{ .ip4 = std.Io.net.Ip4Address.loopback(0) };
+    var server = try addr.listen(io, .{ .mode = .stream });
+    const port = server.socket.address.getPort();
+
+    const Context = struct {
+        server: std.Io.net.Server,
+        io: std.Io,
+        total: usize,
+        byte: u8,
+
+        fn run(ctx: @This()) void {
+            var s = ctx.server;
+            defer s.deinit(ctx.io);
+
+            const stream = s.accept(ctx.io) catch return;
+            defer stream.close(ctx.io);
+
+            var read_buf: [4096]u8 = undefined;
+            var reader = std.Io.net.Stream.Reader.init(stream, ctx.io, &read_buf);
+            var write_buf: [4096]u8 = undefined;
+            var writer = std.Io.net.Stream.Writer.init(stream, ctx.io, &write_buf);
+
+            var http_server = std.http.Server.init(&reader.interface, &writer.interface);
+            _ = http_server.receiveHead() catch return;
+
+            var hdr_buf: [128]u8 = undefined;
+            const header = std.fmt.bufPrint(&hdr_buf, "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ctx.total}) catch return;
+            writer.interface.writeAll(header) catch return;
+            writer.interface.flush() catch return;
+
+            var chunk: [16 * 1024]u8 = undefined;
+            @memset(&chunk, ctx.byte);
+            var remaining = ctx.total;
+            while (remaining > 0) {
+                const to_write = @min(remaining, chunk.len);
+                writer.interface.writeAll(chunk[0..to_write]) catch return;
+                writer.interface.flush() catch return;
+                remaining -= to_write;
+            }
+        }
+    };
+
+    const thread = try std.Thread.spawn(.{}, Context.run, .{Context{
+        .server = server,
+        .io = io,
+        .total = total_bytes,
+        .byte = chunk_byte,
+    }});
+    return .{ .thread = thread, .port = port };
+}
+
+fn startStallMockServer(
+    io: std.Io,
+) !struct { thread: std.Thread, port: u16 } {
+    const addr = std.Io.net.IpAddress{ .ip4 = std.Io.net.Ip4Address.loopback(0) };
+    var server = try addr.listen(io, .{ .mode = .stream });
+    const port = server.socket.address.getPort();
+
+    const Context = struct {
+        server: std.Io.net.Server,
+        io: std.Io,
+
+        fn run(ctx: @This()) void {
+            var s = ctx.server;
+            defer s.deinit(ctx.io);
+
+            const stream = s.accept(ctx.io) catch return;
+            defer stream.close(ctx.io);
+
+            var read_buf: [4096]u8 = undefined;
+            var reader = std.Io.net.Stream.Reader.init(stream, ctx.io, &read_buf);
+            var write_buf: [4096]u8 = undefined;
+            var writer = std.Io.net.Stream.Writer.init(stream, ctx.io, &write_buf);
+
+            var http_server = std.http.Server.init(&reader.interface, &writer.interface);
+            _ = http_server.receiveHead() catch return;
+
+            const response_chunk = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nchunk\r\n";
+            writer.interface.writeAll(response_chunk) catch return;
+            writer.interface.flush() catch return;
+
+            // Stall by sleeping for 1500ms
+            std.Io.sleep(ctx.io, std.Io.Duration.fromMilliseconds(1500), .awake) catch {};
+        }
+    };
+
+    const thread = try std.Thread.spawn(.{}, Context.run, .{Context{
+        .server = server,
+        .io = io,
+    }});
+    return .{ .thread = thread, .port = port };
+}
+
+test "Client: sendStreaming 1MiB body backpressure and unpause without deadlock" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const total_expected = 1024 * 1024;
+    const s = try startStreamingBytesServer(io, total_expected, 'M');
+    defer s.thread.join();
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
+
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
+    defer allocator.free(url);
+
+    var res = try client.get(url).timeout(5000).sendStreaming(io);
+    defer res.deinit();
+
+    try std.testing.expectEqual(@as(u16, 200), res.status_code);
+
+    var reader = res.reader();
+    var chunk_buf: [16 * 1024]u8 = undefined;
+    var total_received: usize = 0;
+
+    while (true) {
+        const n = try reader.read(&chunk_buf);
+        if (n == 0) break;
+        for (chunk_buf[0..n]) |b| {
+            if (b != 'M') return error.UnexpectedByte;
+        }
+        total_received += n;
+    }
+
+    try std.testing.expectEqual(total_expected, total_received);
+    try std.testing.expect(reader.errorReason() == null);
+}
+
+test "Client: sendStreaming dual concurrent streams backpressure" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const s1_size = 512 * 1024;
+    const s2_size = 256 * 1024;
+
+    const s1 = try startStreamingBytesServer(io, s1_size, 'A');
+    defer s1.thread.join();
+    const s2 = try startStreamingBytesServer(io, s2_size, 'B');
+    defer s2.thread.join();
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
+
+    const url1 = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s1.port}, 0);
+    defer allocator.free(url1);
+    const url2 = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s2.port}, 0);
+    defer allocator.free(url2);
+
+    var res1 = try client.get(url1).timeout(5000).sendStreaming(io);
+    defer res1.deinit();
+    var res2 = try client.get(url2).timeout(5000).sendStreaming(io);
+    defer res2.deinit();
+
+    var r1 = res1.reader();
+    var r2 = res2.reader();
+
+    var buf: [8192]u8 = undefined;
+    var n1_total: usize = 0;
+    var n2_total: usize = 0;
+    var done1 = false;
+    var done2 = false;
+
+    while (!done1 or !done2) {
+        if (!done1) {
+            const n = try r1.read(&buf);
+            if (n == 0) {
+                done1 = true;
+            } else {
+                for (buf[0..n]) |b| {
+                    if (b != 'A') return error.UnexpectedByte;
+                }
+                n1_total += n;
+            }
+        }
+        if (!done2) {
+            const n = try r2.read(&buf);
+            if (n == 0) {
+                done2 = true;
+            } else {
+                for (buf[0..n]) |b| {
+                    if (b != 'B') return error.UnexpectedByte;
+                }
+                n2_total += n;
+            }
+        }
+    }
+
+    try std.testing.expectEqual(s1_size, n1_total);
+    try std.testing.expectEqual(s2_size, n2_total);
+}
+
+test "Client: sendStreaming 1MiB early abort without memory leak" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const s = try startStreamingBytesServer(io, 1024 * 1024, 'K');
+    defer s.thread.join();
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
+
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
+    defer allocator.free(url);
+
+    var res = try client.get(url).timeout(5000).sendStreaming(io);
+    var reader = res.reader();
+
+    var small_buf: [4096]u8 = undefined;
+    const n = try reader.read(&small_buf);
+    try std.testing.expect(n > 0);
+
+    // Abort early while transfer is still active on server/driver
+    res.deinit();
+}
+
+test "Client: sendStreaming stall timeout detection" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const s = try startStallMockServer(io);
+    defer s.thread.join();
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
+
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
+    defer allocator.free(url);
+
+    var res = try client.get(url).timeout(400).sendStreaming(io);
+    defer res.deinit();
+
+    try std.testing.expectEqual(@as(u16, 200), res.status_code);
+
+    var reader = res.reader();
+    var buf: [128]u8 = undefined;
+
+    // First chunk ("chunk") should succeed
+    const n1 = try reader.read(&buf);
+    try std.testing.expectEqual(@as(usize, 5), n1);
+    try std.testing.expectEqualStrings("chunk", buf[0..n1]);
+
+    // Second read should encounter timeout due to stall
+    const read_res = reader.read(&buf);
+    try std.testing.expectError(error.Timeout, read_res);
+    try std.testing.expectEqual(error.Timeout, reader.errorReason().?);
+}
+
+test "Client: client.deinit() cross-destruction with active StreamingResponse does not panic" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const s = try startStreamingBytesServer(io, 1024 * 1024, 'Z');
+    defer s.thread.join();
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
+    defer allocator.free(url);
+
+    var res = try client.get(url).timeout(5000).sendStreaming(io);
+
+    // Destroy client while StreamingResponse is still alive and streaming
+    client.deinit();
+
+    // Subsequent read on the orphaned stream must return error and not crash
+    var buf: [32]u8 = undefined;
+    var reader = res.reader();
+    _ = reader.read(&buf) catch {};
+
+    // res.deinit() must clean up without panic or use-after-free
+    res.deinit();
+}
+
+test "Client: sendStreaming connect refused fails cleanly without UAF or double-free" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
+
+    // 127.0.0.1:1 is guaranteed connection refused
+    const res = client.get("http://127.0.0.1:1/")
+        .headers(&.{.{ .name = "X-Test", .value = "UAF-Check" }})
+        .timeout(1000)
+        .sendStreaming(io);
+
+    try std.testing.expectError(error.HttpTransferFailed, res);
+}
+
+test "Client: sendStreaming DNS failure fails cleanly without UAF or double-free" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
+
+    const res = client.get("http://invalid.domain.that.does.not.exist.test/")
+        .headers(&.{.{ .name = "X-Test", .value = "DNS-Check" }})
+        .timeout(1000)
+        .sendStreaming(io);
+
+    try std.testing.expectError(error.HttpTransferFailed, res);
+}
+
+fn startEmptyBodyServer(io: std.Io) !struct { thread: std.Thread, port: u16 } {
+    const addr = std.Io.net.IpAddress{ .ip4 = std.Io.net.Ip4Address.loopback(0) };
+    var server = try addr.listen(io, .{ .mode = .stream });
+    const port = server.socket.address.getPort();
+
+    const Context = struct {
+        server: std.Io.net.Server,
+        io: std.Io,
+
+        fn run(ctx: @This()) void {
+            var s = ctx.server;
+            defer s.deinit(ctx.io);
+
+            const stream = s.accept(ctx.io) catch return;
+            defer stream.close(ctx.io);
+
+            var read_buf: [4096]u8 = undefined;
+            var reader = std.Io.net.Stream.Reader.init(stream, ctx.io, &read_buf);
+            var write_buf: [4096]u8 = undefined;
+            var writer = std.Io.net.Stream.Writer.init(stream, ctx.io, &write_buf);
+
+            var http_server = std.http.Server.init(&reader.interface, &writer.interface);
+            var req = http_server.receiveHead() catch return;
+            req.respond("", .{ .status = .ok, .keep_alive = false }) catch return;
+        }
+    };
+
+    const thread = try std.Thread.spawn(.{}, Context.run, .{Context{
+        .server = server,
+        .io = io,
+    }});
+    return .{ .thread = thread, .port = port };
+}
+
+fn startMultiRequestServer(io: std.Io, total_requests: usize) !struct { thread: std.Thread, port: u16 } {
+    const addr = std.Io.net.IpAddress{ .ip4 = std.Io.net.Ip4Address.loopback(0) };
+    var server = try addr.listen(io, .{ .mode = .stream });
+    const port = server.socket.address.getPort();
+
+    const Context = struct {
+        server: std.Io.net.Server,
+        io: std.Io,
+        count: usize,
+
+        fn run(ctx: @This()) void {
+            var s = ctx.server;
+            defer s.deinit(ctx.io);
+
+            var i: usize = 0;
+            while (i < ctx.count) : (i += 1) {
+                const stream = s.accept(ctx.io) catch return;
+                var read_buf: [4096]u8 = undefined;
+                var reader = std.Io.net.Stream.Reader.init(stream, ctx.io, &read_buf);
+                var write_buf: [4096]u8 = undefined;
+                var writer = std.Io.net.Stream.Writer.init(stream, ctx.io, &write_buf);
+
+                var http_server = std.http.Server.init(&reader.interface, &writer.interface);
+                var req = http_server.receiveHead() catch {
+                    stream.close(ctx.io);
+                    return;
+                };
+                req.respond("pong", .{ .status = .ok, .keep_alive = false }) catch {};
+                stream.close(ctx.io);
+            }
+        }
+    };
+
+    const thread = try std.Thread.spawn(.{}, Context.run, .{Context{
+        .server = server,
+        .io = io,
+        .count = total_requests,
+    }});
+    return .{ .thread = thread, .port = port };
+}
+
+fn startRedirectLoopServer(io: std.Io, max_cycles: usize) !struct { thread: std.Thread, port: u16 } {
+    const addr = std.Io.net.IpAddress{ .ip4 = std.Io.net.Ip4Address.loopback(0) };
+    var server = try addr.listen(io, .{ .mode = .stream });
+    const port = server.socket.address.getPort();
+
+    const Context = struct {
+        server: std.Io.net.Server,
+        io: std.Io,
+        cycles: usize,
+
+        fn run(ctx: @This()) void {
+            var s = ctx.server;
+            defer s.deinit(ctx.io);
+
+            var i: usize = 0;
+            while (i < ctx.cycles) : (i += 1) {
+                const stream = s.accept(ctx.io) catch return;
+                var read_buf: [4096]u8 = undefined;
+                var reader = std.Io.net.Stream.Reader.init(stream, ctx.io, &read_buf);
+                var write_buf: [4096]u8 = undefined;
+                var writer = std.Io.net.Stream.Writer.init(stream, ctx.io, &write_buf);
+
+                var http_server = std.http.Server.init(&reader.interface, &writer.interface);
+                _ = http_server.receiveHead() catch {
+                    stream.close(ctx.io);
+                    return;
+                };
+
+                const redirect_resp = "HTTP/1.1 302 Found\r\nLocation: /loop\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                writer.interface.writeAll(redirect_resp) catch {};
+                writer.interface.flush() catch {};
+                stream.close(ctx.io);
+            }
+        }
+    };
+
+    const thread = try std.Thread.spawn(.{}, Context.run, .{Context{
+        .server = server,
+        .io = io,
+        .cycles = max_cycles,
+    }});
+    return .{ .thread = thread, .port = port };
+}
+
+test "Client: sendStreaming 0-byte empty body returns EOF immediately" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const s = try startEmptyBodyServer(io);
+    defer s.thread.join();
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
+
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
+    defer allocator.free(url);
+
+    var res = try client.get(url).timeout(3000).sendStreaming(io);
+    defer res.deinit();
+
+    try std.testing.expectEqual(@as(u16, 200), res.status_code);
+
+    var reader = res.reader();
+    var buf: [16]u8 = undefined;
+    const n1 = try reader.read(&buf);
+    try std.testing.expectEqual(@as(usize, 0), n1);
+
+    const n2 = try reader.read(&buf);
+    try std.testing.expectEqual(@as(usize, 0), n2);
+    try std.testing.expect(reader.errorReason() == null);
+}
+
+test "Client: sendStreaming trickle read 1 byte per iteration with backpressure" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const total_bytes = 70 * 1024;
+    const s = try startStreamingBytesServer(io, total_bytes, 'T');
+    defer s.thread.join();
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
+
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
+    defer allocator.free(url);
+
+    var res = try client.get(url).timeout(5000).sendStreaming(io);
+    defer res.deinit();
+
+    try std.testing.expectEqual(@as(u16, 200), res.status_code);
+
+    var reader = res.reader();
+    var buf: [1]u8 = undefined;
+    var total_received: usize = 0;
+
+    while (true) {
+        const n = try reader.read(&buf);
+        if (n == 0) break;
+        try std.testing.expectEqual('T', buf[0]);
+        total_received += n;
+    }
+
+    try std.testing.expectEqual(total_bytes, total_received);
+    try std.testing.expect(reader.errorReason() == null);
+}
+
+test "Client: sendStreaming max_concurrency semaphore acquisition and release" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Server expects 2 requests
+    const s = try startMultiRequestServer(io, 2);
+    defer s.thread.join();
+
+    var client = try Self.init(allocator, io, .{
+        .max_concurrency = 2,
+        .load_ca_bundle = false,
+    });
+    defer client.deinit();
+
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
+    defer allocator.free(url);
+
+    // Initial permits: 2
+    try std.testing.expectEqual(@as(usize, 2), client.semaphore.?.permits);
+
+    // Stream 1 acquires 1 permit -> 1 left
+    var res1 = try client.get(url).timeout(3000).sendStreaming(io);
+    try std.testing.expectEqual(@as(usize, 1), client.semaphore.?.permits);
+
+    // Stream 2 acquires 1 permit -> 0 left (exhausted)
+    var res2 = try client.get(url).timeout(3000).sendStreaming(io);
+    try std.testing.expectEqual(@as(usize, 0), client.semaphore.?.permits);
+
+    // Deinit stream 1: releases 1 permit back to semaphore
+    res1.deinit();
+    try std.testing.expectEqual(@as(usize, 1), client.semaphore.?.permits);
+
+    // Deinit stream 2: releases second permit back
+    res2.deinit();
+    try std.testing.expectEqual(@as(usize, 2), client.semaphore.?.permits);
+}
+
+test "Client: sendStreaming redirect loop exceeds max redirects cleanly" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Initial request + 2 redirects = 3 cycles
+    const s = try startRedirectLoopServer(io, 3);
+    defer s.thread.join();
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
+
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/loop", .{s.port}, 0);
+    defer allocator.free(url);
+
+    const LimitHook = struct {
+        fn hook(easy: *Easy) !void {
+            try easy.setMaxRedirects(2);
+        }
+    };
+
+    // Follows redirects but capped at 2, so loop will abort and return error
+    const res = client.get(url)
+        .configure(LimitHook.hook)
+        .timeout(3000)
+        .sendStreaming(io);
+
+    try std.testing.expectError(error.HttpTransferFailed, res);
+}
+
+test "Client: sendStreaming double deinit is safe and idempotent" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const s = try startEmptyBodyServer(io);
+    defer s.thread.join();
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
+
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
+    defer allocator.free(url);
+
+    var res = try client.get(url).timeout(3000).sendStreaming(io);
+
+    // Call deinit twice explicitly (e.g. simulating defer res.deinit() + manual res.deinit())
+    res.deinit();
+    res.deinit();
 }

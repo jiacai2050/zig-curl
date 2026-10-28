@@ -352,5 +352,32 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("  Background Future resolved with HTTP status: {d}!\n\n", .{status});
     }
 
+    // =========================================================================
+    // Showcase 10: Streaming Response Body with std.Io.Reader
+    // =========================================================================
+    std.debug.print("=== 10. Streaming Response Body with std.Io.Reader ===\n", .{});
+    {
+        var res = try client.get(BASE_URL ++ "/headers")
+            .timeout(10000)
+            .sendStreaming(io);
+        defer res.deinit();
+
+        std.debug.print("  Headers received early! HTTP Status: {d}\n", .{res.status_code});
+
+        var reader = res.reader();
+        var total_bytes: usize = 0;
+        var chunk_count: usize = 0;
+        var buf: [128]u8 = undefined;
+
+        while (true) {
+            const n = try reader.read(&buf);
+            if (n == 0) break;
+            total_bytes += n;
+            chunk_count += 1;
+        }
+
+        std.debug.print("  Streamed {d} bytes across {d} chunks with 0 memory bloat.\n\n", .{ total_bytes, chunk_count });
+    }
+
     std.debug.print("All showcases executed with 0 errors and 0 memory leaks.\n", .{});
 }
