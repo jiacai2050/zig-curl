@@ -1,6 +1,95 @@
 //! `Client` provides an asynchronous, high-throughput, structured HTTP client
 //! integrating libcurl's multi-handle with `std.Io` concurrency runtime.
 //!
+//! ## Architecture & Thread Model
+//!
+//! The client adopts a decoupled, event-driven producer-consumer architecture that
+//! bridges libcurl's native C networking engine with Zig's cooperative fiber runtime:
+//!
+//! ```text
+//!                                  [ Architecture Overview ]
+//!
+//!   +----------------------------------------+
+//!   | Caller Fibers / OS Threads (Producers) |
+//!   |   - client.get(url).send(io)           |
+//!   +----------------------------------------+
+//!          │ (1) Acquire Easy                 │ (2) Push RequestContext
+//!          ▼                                  ▼
+//!   [ HandlePool ]                   [ pending_queue (SpinLock) ]
+//!                                             │
+//!          ┌──────────────────────────────────┘ (3) idle_event.set() & curl_multi_wakeup()
+//!          │ (Wakes up driver thread instantly)
+//!          ▼
+//!   +--------------------------------------------------------------+
+//!   | Dedicated Background Driver Thread (Consumer & Reactor)      |
+//!   |                                                              |
+//!   |   driverLoop()                                               |
+//!   |     ├─► drainPendingQueue()  ──► curl_multi_add_handle()     |
+//!   |     ├─► if idle (active==null)──► idle_event.wait() (NO timeout!)
+//!   |     ├─► curl_multi_poll(1s)  ──► polls sockets (auto internal timeouts)
+//!   |     ├─► curl_multi_perform() ──► drives HTTP/TLS engine      |
+//!   |     └─► processDoneTransfers()                               |
+//!   |             │                                                |
+//!   |             └─► ctx.event.set(ctx.io) ──────────────────┐    |
+//!   +---------------------------------------------------------│----+
+//!                                                             │
+//!          ┌──────────────────────────────────────────────────┘ (4) Awaken waiting caller
+//!          ▼
+//!   [ Caller Resumes ] ──► Returns Response(status, body)
+//! ```
+//!
+//! ```text
+//!                             [ Request Lifecycle Flow ]
+//!
+//!  Caller Fiber                        driver_thread                         OS Kernel / libcurl
+//!       │                                    │                                        │
+//!       │── 1. Push RequestContext ─────────►│ (Enqueues into pending_queue)          │
+//!       │── 2. idle_event.set() / wakeup ───►│ (Wakes idle driver thread instantly)   │
+//!       │                                    │                                        │
+//!       │── 3. context.event.wait(io)        │                                        │
+//!       │      (Caller Fiber Suspends)       │── 4. drainPendingQueue()               │
+//!       │                                    │      curl_multi_add_handle()           │
+//!       │                                    │                                        │
+//!       │                                    │── 5. curl_multi_poll(dynamic_ms) ─────►│
+//!       │                                    │      (Polls only when active requests) │
+//!       │                                    │◄───────────────────────────────────────│
+//!       │                                    │      (Socket readable / writable)      │
+//!       │                                    │                                        │
+//!       │                                    │── 6. curl_multi_perform()              │
+//!       │                                    │      (Data transferred to buffer)      │
+//!       │                                    │                                        │
+//!       │◄── 7. ctx.event.set(ctx.io) ───────│ (Process CURLMSG_DONE)                 │
+//!       │      (Caller Fiber Awakened)       │                                        │
+//!       ▼                                    ▼                                        ▼
+//!   Returns Response                    Suspends on idle_event if active_list == null
+//! ```
+//!
+//! 1. **Client / Fiber Callers (Producers)**:
+//!    - User code calls `request.send(io)` from any thread or cooperative fiber.
+//!    - Acquires an `Easy` handle from the lock-free/spinlock `HandlePool`.
+//!    - Prepares the stack-allocated `RequestContext` and safely appends it to the
+//!      thread-safe `pending_queue` protected by `queue_mutex`.
+//!    - Triggers `idle_event.set(io)` and `curl_multi_wakeup(multi)` to immediately
+//!      interrupt the background driver thread whether it is sleeping or polling.
+//!    - Suspends execution via `context.event.waitUncancelable(io)` without blocking
+//!      the underlying OS thread, allowing other fibers to run concurrently.
+//!
+//! 2. **Dedicated Background Driver Thread (Consumer & Reactor)**:
+//!    - A single, dedicated OS thread (`driver_thread`) runs `driverLoop` to exclusively
+//!      own and manipulate the `CURLM` multi-handle, completely eliminating multi-thread
+//!      locking contention on libcurl internal state machines.
+//!    - **Drain Phase**: Empties `pending_queue` in batch and adds handles to `multi` via
+//!      `curl_multi_add_handle`, maintaining them in an `active_list`.
+//!    - **True Zero-Timeout Idle Suspension**:
+//!      * When idle (`active_list == null`): Unconditionally blocks on `self.idle_event.waitUncancelable(self.io)`.
+//!        It does NOT call `curl_multi_poll` and sets NO timer/timeout, achieving true 0% CPU consumption.
+//!      * It is awakened instantly when new requests arrive via `idle_event.set()` or during `deinit()`.
+//!      * When active: Calls `curl_multi_poll` with a 1000ms safety cap. libcurl automatically
+//!        scales down this timeout internally to match any pending internal protocol deadlines.
+//!    - **Execution & Dispatch Phase**: Executes `curl_multi_perform`, processes done
+//!      transfers (`CURLMSG_DONE`), copies responses, and awakens waiting caller fibers
+//!      across threads by signaling `ctx.event.set(ctx.io)`.
+//!
 //! Thread Safety Contract:
 //! - `allocator`: Must be thread-safe (e.g. `std.heap.c_allocator`). The background reactor
 //!   thread allocates response buffers dynamically during write callbacks concurrently
@@ -15,6 +104,7 @@
 //! - Transparent connection, DNS, and TLS session reuse via `CURLSH`
 //! - Clean Easy handle pooling with automatic Taint-and-Dispose isolation
 //! - Non-blocking fiber suspension and resumption via `std.Io.Event`
+//! - Event-driven driver loop with zero idle CPU busy-wait
 const std = @import("std");
 const errors = @import("errors.zig");
 const util = @import("util.zig");
@@ -33,6 +123,7 @@ const ResizableBuffer = util.ResizableBuffer;
 const Self = @This();
 
 allocator: Allocator,
+io: std.Io,
 share: *Share,
 multi: *c.CURLM,
 pool: HandlePool,
@@ -40,6 +131,7 @@ running: std.atomic.Value(bool),
 driver_thread: std.Thread,
 options: Options,
 semaphore: ?std.Io.Semaphore = null,
+idle_event: std.Io.Event = .unset,
 
 ca_bundle: ?ResizableBuffer = null,
 owns_ca_bundle: bool = false,
@@ -63,7 +155,6 @@ pub const Response = struct {
     }
 
     /// Parse response body as JSON into the specified type `T`.
-    /// Directly mirrors `reqwest`'s `response.json::<T>().await`.
     pub fn json(
         self: *Response,
         comptime T: type,
@@ -169,6 +260,7 @@ pub fn init(allocator: Allocator, io: std.Io, options: Options) !*Self {
 
     self.* = .{
         .allocator = allocator,
+        .io = io,
         .share = share,
         .multi = multi,
         .pool = .{},
@@ -186,6 +278,7 @@ pub fn init(allocator: Allocator, io: std.Io, options: Options) !*Self {
 
 pub fn deinit(self: *Self) void {
     self.running.store(false, .release);
+    self.idle_event.set(self.io);
     const wakeup_rc = c.curl_multi_wakeup(self.multi);
     assert(wakeup_rc == c.CURLM_OK);
     self.driver_thread.join();
@@ -284,8 +377,20 @@ fn driverLoop(self: *Self) void {
     while (self.running.load(.acquire)) {
         self.drainPendingQueue();
 
+        if (self.active_list == null) {
+            // Idle state: no active network transfers in flight.
+            // Suspend unconditionally on `idle_event` without calling curl_multi_poll,
+            // achieving true event-driven suspension with ZERO CPU usage and NO timeout!
+            self.idle_event.waitUncancelable(self.io);
+            self.idle_event.reset();
+            continue;
+        }
+
+        // Active transfers in flight: poll for socket activity.
+        // Per `man curl_multi_poll`, libcurl automatically scales down the 1000ms cap
+        // if internal timers (e.g. DNS resolution, connect timeout) expire earlier.
         var num_fds: c_int = 0;
-        const poll_rc = c.curl_multi_poll(self.multi, null, 0, 100, &num_fds);
+        const poll_rc = c.curl_multi_poll(self.multi, null, 0, 1000, &num_fds);
         assert(poll_rc == c.CURLM_OK);
 
         var still_running: c_int = 0;
@@ -595,6 +700,8 @@ pub const RequestBuilder = struct {
             client.queue_mutex.unlock();
         }
 
+        // Wake driver thread if it is idle-waiting on idle_event or polling in curl_multi_poll
+        client.idle_event.set(client.io);
         const wakeup_rc = c.curl_multi_wakeup(client.multi);
         assert(wakeup_rc == c.CURLM_OK);
 
