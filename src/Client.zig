@@ -692,6 +692,10 @@ fn abortStream(stream: *StreamContext) void {
     }
     stream.client_alive.store(false, .release);
     stream.is_tainted = true;
+    // Note: When the client shuts down while a Response/Stream is still in-flight or unread,
+    // this abort currently maps to `error.HttpTransferFailed` via onTransferDone.
+    // TODO: Consider introducing a dedicated error variant (e.g. `error.ClientClosed`) so callers
+    // can cleanly differentiate between a remote network/server failure and an intentional local client shutdown.
     stream.onTransferDone(stream.result);
 }
 
@@ -842,7 +846,10 @@ fn driverLoop(self: *Self) void {
         self.processDoneTransfers();
     }
 
-    // Drain remaining transfers on shutdown with bounded iterations (max ~5s)
+    // Drain remaining transfers on shutdown with bounded iterations (max ~5s).
+    // Currently bounded to 100 iterations with 50ms polling (~5000ms maximum window).
+    // TODO: Consider exposing `shutdown_drain_timeout_ms` in `Client.Options` for environments
+    // with strict graceful-termination deadlines (e.g. Kubernetes SIGTERM requiring shutdown within 1-2s).
     self.drainPendingQueue();
     self.maintainActiveStreams();
     var still_running: c_int = 1;
@@ -1061,6 +1068,12 @@ pub const RequestBuilder = struct {
         const stream = try client.allocator.create(StreamContext);
         errdefer if (!stream_released) client.allocator.destroy(stream);
 
+        // Allocate the streaming ring buffer.
+        // libcurl write callbacks are strictly bounded to *pmax_write = CURL_MAX_WRITE_SIZE = 16384 (16KB)
+        // per libcurl source (lib/cw-out.c:153), regardless of CURLOPT_BUFFERSIZE.
+        // A 64KB ring buffer is 4x the maximum deliverable chunk size and cannot overflow with standard libcurl.
+        // (Note: If built against a custom libcurl with modified CURL_MAX_WRITE_SIZE > 64KB, dynamic sizing
+        // as max(64KB, 2 * max_write_size) would be required).
         const ring_buffer = try client.allocator.alloc(u8, 64 * 1024);
         errdefer if (!stream_released) client.allocator.free(ring_buffer);
 

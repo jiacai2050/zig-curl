@@ -69,8 +69,11 @@ pub fn build(b: *Build) !void {
         try addExample(b, name, module, target, optimize);
     }
 
+    const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match the filter");
+
     const main_tests = b.addTest(.{
         .root_module = module,
+        .filters = if (test_filter) |filter| &.{filter} else &.{},
     });
 
     const run_main_tests = b.addRunArtifact(main_tests);
