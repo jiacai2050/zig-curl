@@ -2,7 +2,7 @@
 //!
 //! Demonstrates:
 //! 1. Fluent request builder syntax (modeled after `reqwest`)
-//! 2. Strongly-typed JSON deserialization directly from `Response` (`res.json(T)`)
+//! 2. Strongly-typed JSON deserialization directly from `Response` (`res.json(T, ...)`)
 //! 3. Real network timeout simulation & precise error handling
 //! 4. HTTP Bearer authentication & automatic redirect tracking
 //! 5. Fine-grained escape-hatch customization via `.configure(hook)`
@@ -56,7 +56,7 @@ pub fn main(init: std.process.Init) !void {
     // =========================================================================
     // Showcase 1: Simple GET with Strongly-Typed JSON Deserialization
     // =========================================================================
-    std.debug.print("=== 1. Strongly-Typed JSON Deserialization (res.json(T)) ===\n", .{});
+    std.debug.print("=== 1. Strongly-Typed JSON Deserialization (res.json(T, ...)) ===\n", .{});
     {
         var res = try client.get(BASE_URL ++ "/ip")
             .headers(&.{.{ .name = "Accept", .value = "application/json" }})
@@ -67,7 +67,7 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("Status: {d}\n", .{res.status_code});
 
         // Directly parse JSON from response body into a Zig struct (like reqwest::Response::json)
-        const parsed = try res.json(IpGeoResponse, .{ .ignore_unknown_fields = true });
+        const parsed = try res.json(IpGeoResponse, .{ .ignore_unknown_fields = true }, 64 * 1024);
         defer parsed.deinit();
 
         const geo = parsed.value;
@@ -96,9 +96,12 @@ pub fn main(init: std.process.Init) !void {
             .send(io);
         defer res.deinit();
 
+        const body_bytes = try res.bodyAlloc(allocator, 64 * 1024);
+        defer allocator.free(body_bytes);
+
         std.debug.print("Status: {d}\nResponse Body Snippet:\n{s}\n\n", .{
             res.status_code,
-            res.body[0..@min(res.body.len, 180)],
+            body_bytes[0..@min(body_bytes.len, 180)],
         });
     }
 
@@ -140,7 +143,7 @@ pub fn main(init: std.process.Init) !void {
             .send(io);
         defer auth_res.deinit();
 
-        const auth_json = try auth_res.json(BearerResponse, .{ .ignore_unknown_fields = true });
+        const auth_json = try auth_res.json(BearerResponse, .{ .ignore_unknown_fields = true }, 64 * 1024);
         defer auth_json.deinit();
         std.debug.print("  Bearer Auth -> Authenticated: {}, Token: {s}\n", .{
             auth_json.value.authenticated,
@@ -153,9 +156,11 @@ pub fn main(init: std.process.Init) !void {
             .timeout(15000)
             .send(io);
         defer redir_res.deinit();
+        const redir_body = try redir_res.bodyAlloc(allocator, 64 * 1024);
+        defer allocator.free(redir_body);
         std.debug.print("  Redirect 2x -> Final Status: {d}, Final Body length: {d} bytes\n\n", .{
             redir_res.status_code,
-            redir_res.body.len,
+            redir_body.len,
         });
     }
 
@@ -206,7 +211,13 @@ pub fn main(init: std.process.Init) !void {
                 };
                 defer r.deinit();
 
-                std.debug.print("    [Group] {s} -> status {d}, {d} bytes\n", .{ path, r.status_code, r.body.len });
+                const b = r.bodyAlloc(c.allocator, 64 * 1024) catch |err| {
+                    std.debug.print("    [Group] {s} bodyAlloc failed: {any}\n", .{ path, err });
+                    return;
+                };
+                defer c.allocator.free(b);
+
+                std.debug.print("    [Group] {s} -> status {d}, {d} bytes\n", .{ path, r.status_code, b.len });
             }
         };
 
@@ -359,7 +370,7 @@ pub fn main(init: std.process.Init) !void {
     {
         var res = try client.get(BASE_URL ++ "/headers")
             .timeout(10000)
-            .sendStreaming(io);
+            .send(io);
         defer res.deinit();
 
         std.debug.print("  Headers received early! HTTP Status: {d}\n", .{res.status_code});

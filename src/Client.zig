@@ -137,8 +137,8 @@ ca_bundle: ?ResizableBuffer = null,
 owns_ca_bundle: bool = false,
 
 queue_mutex: SpinLock = .{},
-pending_queue: ?*RequestContext = null,
-active_list: ?*RequestContext = null,
+pending_queue: ?*StreamContext = null,
+active_list: ?*StreamContext = null,
 
 stream_mutex: SpinLock = .{},
 stream_list: ?*StreamContext = null,
@@ -146,39 +146,6 @@ stream_list: ?*StreamContext = null,
 pub const HeaderEntry = struct {
     name: []const u8,
     value: []const u8,
-};
-
-pub const Response = struct {
-    allocator: Allocator,
-    status_code: u16,
-    body: []const u8,
-
-    pub fn deinit(self: *Response) void {
-        self.allocator.free(self.body);
-    }
-
-    /// Parse response body as JSON into the specified type `T`.
-    pub fn json(
-        self: *Response,
-        comptime T: type,
-        options: std.json.ParseOptions,
-    ) !std.json.Parsed(T) {
-        return std.json.parseFromSlice(T, self.allocator, self.body, options);
-    }
-};
-
-pub const RequestContext = struct {
-    io: std.Io,
-    easy: *Easy,
-    event: std.Io.Event = .unset,
-    result: c.CURLcode = c.CURLE_OK,
-    response_code: c_long = 0,
-    body_writer: ?std.Io.Writer.Allocating = null,
-    c_headers: ?*c.struct_curl_slist = null,
-    next: ?*RequestContext = null,
-    active_next: ?*RequestContext = null,
-    active_prev: ?*RequestContext = null,
-    stream: ?*StreamContext = null,
 };
 
 pub const BodyReader = struct {
@@ -264,19 +231,61 @@ pub const BodyReader = struct {
     }
 };
 
-pub const StreamingResponse = struct {
+pub const Response = struct {
     client: *Self,
     status_code: u16,
     stream: ?*StreamContext = null,
     semaphore_held: bool = false,
     reader_buf: [4096]u8 = undefined,
 
-    pub fn reader(self: *StreamingResponse) BodyReader {
-        const stream = self.stream orelse @panic("StreamingResponse used after deinit");
+    pub fn reader(self: *Response) BodyReader {
+        const stream = self.stream orelse @panic("Response used after deinit");
         return BodyReader.init(stream, &self.reader_buf);
     }
 
-    pub fn deinit(self: *StreamingResponse) void {
+    /// Read all remaining response body bytes into memory up to `max_size`.
+    /// Caller owns the returned memory and must free it with `allocator`.
+    ///
+    /// If the response body exceeds `max_size`, returns `error.StreamTooLong`.
+    /// Note that on error, the response stream is not automatically deinitialized;
+    /// the caller remains responsible for calling `res.deinit()`.
+    pub fn bodyAlloc(self: *Response, allocator: Allocator, max_size: usize) ![]u8 {
+        var r = self.reader();
+        return r.readAllAlloc(allocator, max_size);
+    }
+
+    /// Parse response body as JSON into the specified type `T` up to `max_size`.
+    /// The returned `std.json.Parsed(T)` owns the underlying memory; call `parsed.deinit()` to release.
+    ///
+    /// If the response body exceeds `max_size`, returns `error.StreamTooLong`.
+    /// Note that on error, the response stream is not automatically deinitialized;
+    /// the caller remains responsible for calling `res.deinit()`.
+    pub fn json(
+        self: *Response,
+        comptime T: type,
+        options: std.json.ParseOptions,
+        max_size: usize,
+    ) !std.json.Parsed(T) {
+        const client_allocator = self.client.allocator;
+        var parsed = std.json.Parsed(T){
+            .arena = try client_allocator.create(std.heap.ArenaAllocator),
+            .value = undefined,
+        };
+        errdefer client_allocator.destroy(parsed.arena);
+        parsed.arena.* = std.heap.ArenaAllocator.init(client_allocator);
+        errdefer parsed.arena.deinit();
+
+        const arena_allocator = parsed.arena.allocator();
+        const bytes = try self.bodyAlloc(arena_allocator, max_size);
+
+        var scanner = std.json.Scanner.initCompleteInput(arena_allocator, bytes);
+        defer scanner.deinit();
+
+        parsed.value = try std.json.parseFromTokenSourceLeaky(T, arena_allocator, &scanner, options);
+        return parsed;
+    }
+
+    pub fn deinit(self: *Response) void {
         const stream = self.stream orelse return;
         self.stream = null;
 
@@ -286,7 +295,7 @@ pub const StreamingResponse = struct {
             const client = self.client;
             if (self.semaphore_held) {
                 if (client.semaphore) |*sem| {
-                    sem.post(stream.req.io);
+                    sem.post(stream.io);
                 }
                 self.semaphore_held = false;
             }
@@ -307,13 +316,25 @@ pub const StreamingResponse = struct {
 };
 
 pub const StreamContext = struct {
-    req: RequestContext,
     client: *Self,
     allocator: Allocator,
-    client_alive: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
-    ref_count: std.atomic.Value(u32),
+    io: std.Io,
+    easy: *Easy,
+    result: c.CURLcode = c.CURLE_OK,
+    response_code: c_long = 0,
+    c_headers: ?*c.struct_curl_slist = null,
+
+    // Multi engine queue and active list links
+    next: ?*StreamContext = null,
+    active_prev: ?*StreamContext = null,
+    active_next: ?*StreamContext = null,
+
+    // Client stream tracking links
     stream_prev: ?*StreamContext = null,
     stream_next: ?*StreamContext = null,
+
+    client_alive: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
+    ref_count: std.atomic.Value(u32),
     mutex: SpinLock = .{},
     header_event: std.Io.Event = .unset,
     read_event: std.Io.Event = .unset,
@@ -333,11 +354,11 @@ pub const StreamContext = struct {
 
     fn onTransferDone(self: *StreamContext, result: c.CURLcode) void {
         self.mutex.lock();
-        self.req.result = result;
+        self.result = result;
 
         if (!self.headers_ready) {
             self.headers_ready = true;
-            self.header_event.set(self.req.io);
+            self.header_event.set(self.io);
         }
 
         self.eof = true;
@@ -348,7 +369,7 @@ pub const StreamContext = struct {
                 self.err = error.HttpTransferFailed;
             }
         }
-        self.read_event.set(self.req.io);
+        self.read_event.set(self.io);
         self.mutex.unlock();
 
         self.releaseRef();
@@ -357,27 +378,17 @@ pub const StreamContext = struct {
     fn releaseRef(self: *StreamContext) void {
         if (self.ref_count.fetchSub(1, .acq_rel) == 1) {
             const allocator = self.allocator;
-            const easy = self.req.easy;
+            const easy = self.easy;
             const is_tainted = self.is_tainted;
             const client_alive = self.client_alive.load(.acquire);
 
             if (client_alive) {
-                const client = self.client;
-                client.stream_mutex.lock();
-                if (self.stream_prev) |prev| {
-                    prev.stream_next = self.stream_next;
-                } else {
-                    client.stream_list = self.stream_next;
-                }
-                if (self.stream_next) |next| {
-                    next.stream_prev = self.stream_prev;
-                }
-                client.stream_mutex.unlock();
+                self.client.unlinkStream(self);
             }
 
-            if (self.req.c_headers) |h| {
+            if (self.c_headers) |h| {
                 c.curl_slist_free_all(h);
-                self.req.c_headers = null;
+                self.c_headers = null;
             }
 
             allocator.free(self.ring_buffer);
@@ -433,7 +444,7 @@ pub const StreamContext = struct {
             }
 
             self.mutex.unlock();
-            self.read_event.waitUncancelable(self.req.io);
+            self.read_event.waitUncancelable(self.io);
         }
     }
 };
@@ -644,49 +655,75 @@ fn releaseHandle(self: *Self, easy: *Easy, is_tainted: bool) void {
     }
 }
 
+fn unlinkActive(self: *Self, stream: *StreamContext) void {
+    if (stream.active_prev) |prev| {
+        prev.active_next = stream.active_next;
+    } else {
+        self.active_list = stream.active_next;
+    }
+    if (stream.active_next) |next| {
+        next.active_prev = stream.active_prev;
+    }
+    stream.active_prev = null;
+    stream.active_next = null;
+}
+
+fn unlinkStream(self: *Self, stream: *StreamContext) void {
+    self.stream_mutex.lock();
+    defer self.stream_mutex.unlock();
+    if (stream.stream_prev) |prev| {
+        prev.stream_next = stream.stream_next;
+    } else {
+        self.stream_list = stream.stream_next;
+    }
+    if (stream.stream_next) |next| {
+        next.stream_prev = stream.stream_prev;
+    }
+    stream.stream_prev = null;
+    stream.stream_next = null;
+}
+
+fn abortStream(stream: *StreamContext) void {
+    _ = c.curl_easy_setopt(stream.easy.handle, c.CURLOPT_SHARE, @as(?*anyopaque, null));
+    stream.result = c.CURLE_ABORTED_BY_CALLBACK;
+    if (stream.c_headers) |h| {
+        c.curl_slist_free_all(h);
+        stream.c_headers = null;
+    }
+    stream.client_alive.store(false, .release);
+    stream.is_tainted = true;
+    stream.onTransferDone(stream.result);
+}
+
 fn maintainActiveStreams(self: *Self) void {
     var curr = self.active_list;
-    while (curr) |ctx| {
-        const next = ctx.active_next;
-        if (ctx.stream) |stream| {
-            if (stream.aborted.load(.acquire)) {
-                // Aborted by caller: unlink from active_list and remove from multi
-                if (ctx.active_prev) |prev| {
-                    prev.active_next = ctx.active_next;
-                } else {
-                    self.active_list = ctx.active_next;
-                }
-                if (ctx.active_next) |act_next| {
-                    act_next.active_prev = ctx.active_prev;
-                }
-                ctx.active_prev = null;
-                ctx.active_next = null;
+    while (curr) |stream| {
+        const next = stream.active_next;
+        if (stream.aborted.load(.acquire)) {
+            self.unlinkActive(stream);
+            assert(c.curl_multi_remove_handle(self.multi, stream.easy.handle) == c.CURLM_OK);
+            if (stream.c_headers) |h| {
+                c.curl_slist_free_all(h);
+                stream.c_headers = null;
+            }
 
-                const remove_rc = c.curl_multi_remove_handle(self.multi, ctx.easy.handle);
-                assert(remove_rc == c.CURLM_OK);
-                if (ctx.c_headers) |h| {
-                    c.curl_slist_free_all(h);
-                    ctx.c_headers = null;
-                }
+            stream.mutex.lock();
+            stream.eof = true;
+            stream.read_event.set(stream.io);
+            stream.mutex.unlock();
 
-                stream.mutex.lock();
-                stream.eof = true;
-                stream.read_event.set(ctx.io);
-                stream.mutex.unlock();
-
-                stream.releaseRef();
-            } else if (stream.unpause_requested.load(.acquire)) {
-                stream.unpause_requested.store(false, .release);
-                // curl_easy_pause may synchronously flush internal buffers and re-enter streamWriteCallback,
-                // so it must be executed WITHOUT holding stream.mutex to prevent recursive SpinLock deadlock.
-                stream.mutex.lock();
-                const was_paused = stream.paused;
-                stream.paused = false;
-                stream.mutex.unlock();
-                if (was_paused) {
-                    const rc = c.curl_easy_pause(ctx.easy.handle, c.CURLPAUSE_CONT);
-                    assert(rc == c.CURLE_OK);
-                }
+            stream.releaseRef();
+        } else if (stream.unpause_requested.load(.acquire)) {
+            stream.unpause_requested.store(false, .release);
+            // curl_easy_pause may synchronously flush internal buffers and re-enter streamWriteCallback,
+            // so it must be executed WITHOUT holding stream.mutex to prevent recursive SpinLock deadlock.
+            stream.mutex.lock();
+            const was_paused = stream.paused;
+            stream.paused = false;
+            stream.mutex.unlock();
+            if (was_paused) {
+                const rc = c.curl_easy_pause(stream.easy.handle, c.CURLPAUSE_CONT);
+                assert(rc == c.CURLE_OK);
             }
         }
         curr = next;
@@ -710,7 +747,7 @@ fn streamHeaderCallback(
         (line.len == 1 and line[0] == '\n'))
     {
         var code: c_long = 0;
-        _ = c.curl_easy_getinfo(stream.req.easy.handle, c.CURLINFO_RESPONSE_CODE, &code);
+        _ = c.curl_easy_getinfo(stream.easy.handle, c.CURLINFO_RESPONSE_CODE, &code);
 
         const is_redirect = (code >= 300 and code < 400 and stream.follow_location);
         const is_informational = (code >= 100 and code < 200);
@@ -718,9 +755,9 @@ fn streamHeaderCallback(
         if (!is_redirect and !is_informational) {
             stream.mutex.lock();
             if (!stream.headers_ready) {
-                stream.req.response_code = code;
+                stream.response_code = code;
                 stream.headers_ready = true;
-                stream.header_event.set(stream.req.io);
+                stream.header_event.set(stream.io);
             }
             stream.mutex.unlock();
         }
@@ -743,10 +780,10 @@ fn streamWriteCallback(
 
     if (!stream.headers_ready) {
         var code: c_long = 0;
-        _ = c.curl_easy_getinfo(stream.req.easy.handle, c.CURLINFO_RESPONSE_CODE, &code);
-        stream.req.response_code = code;
+        _ = c.curl_easy_getinfo(stream.easy.handle, c.CURLINFO_RESPONSE_CODE, &code);
+        stream.response_code = code;
         stream.headers_ready = true;
-        stream.header_event.set(stream.req.io);
+        stream.header_event.set(stream.io);
     }
 
     if (stream.aborted.load(.acquire)) {
@@ -769,7 +806,7 @@ fn streamWriteCallback(
     stream.ring_tail = (stream.ring_tail + total_bytes) % stream.ring_buffer.len;
     stream.ring_count += total_bytes;
 
-    stream.read_event.set(stream.req.io);
+    stream.read_event.set(stream.io);
     stream.mutex.unlock();
 
     return @intCast(total_bytes);
@@ -822,24 +859,10 @@ fn driverLoop(self: *Self) void {
 
     // If any active transfers remain in multi after shutdown drain, abort and remove them
     var curr_active = self.active_list;
-    while (curr_active) |ctx| {
-        const next = ctx.active_next;
-        const remove_rc = c.curl_multi_remove_handle(self.multi, ctx.easy.handle);
-        assert(remove_rc == c.CURLM_OK);
-        // Explicitly detach easy handle from CURLSH to prevent CURLSHE_IN_USE panic in self.share.deinit()
-        _ = c.curl_easy_setopt(ctx.easy.handle, c.CURLOPT_SHARE, @as(?*anyopaque, null));
-        ctx.result = c.CURLE_ABORTED_BY_CALLBACK;
-        if (ctx.c_headers) |h| {
-            c.curl_slist_free_all(h);
-            ctx.c_headers = null;
-        }
-        if (ctx.stream) |stream| {
-            stream.client_alive.store(false, .release);
-            stream.is_tainted = true;
-            stream.onTransferDone(ctx.result);
-        } else {
-            ctx.event.set(ctx.io);
-        }
+    while (curr_active) |stream| {
+        const next = stream.active_next;
+        assert(c.curl_multi_remove_handle(self.multi, stream.easy.handle) == c.CURLM_OK);
+        abortStream(stream);
         curr_active = next;
     }
     self.active_list = null;
@@ -849,21 +872,9 @@ fn driverLoop(self: *Self) void {
     var unhandled = self.pending_queue;
     self.pending_queue = null;
     self.queue_mutex.unlock();
-    while (unhandled) |ctx| {
-        const next = ctx.next;
-        _ = c.curl_easy_setopt(ctx.easy.handle, c.CURLOPT_SHARE, @as(?*anyopaque, null));
-        ctx.result = c.CURLE_ABORTED_BY_CALLBACK;
-        if (ctx.c_headers) |h| {
-            c.curl_slist_free_all(h);
-            ctx.c_headers = null;
-        }
-        if (ctx.stream) |stream| {
-            stream.client_alive.store(false, .release);
-            stream.is_tainted = true;
-            stream.onTransferDone(ctx.result);
-        } else {
-            ctx.event.set(ctx.io);
-        }
+    while (unhandled) |stream| {
+        const next = stream.next;
+        abortStream(stream);
         unhandled = next;
     }
 }
@@ -874,27 +885,23 @@ fn drainPendingQueue(self: *Self) void {
     self.pending_queue = null;
     self.queue_mutex.unlock();
 
-    while (item) |ctx| {
-        const next = ctx.next;
-        const rc = c.curl_multi_add_handle(self.multi, ctx.easy.handle);
+    while (item) |stream| {
+        const next = stream.next;
+        const rc = c.curl_multi_add_handle(self.multi, stream.easy.handle);
         if (rc != c.CURLM_OK) {
-            ctx.result = c.CURLE_FAILED_INIT;
-            if (ctx.c_headers) |h| {
+            stream.result = c.CURLE_FAILED_INIT;
+            if (stream.c_headers) |h| {
                 c.curl_slist_free_all(h);
-                ctx.c_headers = null;
+                stream.c_headers = null;
             }
-            if (ctx.stream) |stream| {
-                stream.onTransferDone(ctx.result);
-            } else {
-                ctx.event.set(ctx.io);
-            }
+            stream.onTransferDone(stream.result);
         } else {
-            ctx.active_next = self.active_list;
-            ctx.active_prev = null;
+            stream.active_next = self.active_list;
+            stream.active_prev = null;
             if (self.active_list) |active_head| {
-                active_head.active_prev = ctx;
+                active_head.active_prev = stream;
             }
-            self.active_list = ctx;
+            self.active_list = stream;
         }
         item = next;
     }
@@ -913,21 +920,10 @@ fn processDoneTransfers(self: *Self) void {
             assert(info_rc == c.CURLE_OK);
 
             if (private_ptr) |ptr| {
-                const ctx: *RequestContext = @ptrCast(@alignCast(ptr));
+                const stream: *StreamContext = @ptrCast(@alignCast(ptr));
+                self.unlinkActive(stream);
 
-                // Unlink from active_list
-                if (ctx.active_prev) |prev| {
-                    prev.active_next = ctx.active_next;
-                } else {
-                    self.active_list = ctx.active_next;
-                }
-                if (ctx.active_next) |act_next| {
-                    act_next.active_prev = ctx.active_prev;
-                }
-                ctx.active_prev = null;
-                ctx.active_next = null;
-
-                ctx.result = msg.*.data.result;
+                stream.result = msg.*.data.result;
 
                 var code: c_long = 0;
                 const resp_rc = c.curl_easy_getinfo(
@@ -936,23 +932,18 @@ fn processDoneTransfers(self: *Self) void {
                     &code,
                 );
                 assert(resp_rc == c.CURLE_OK);
-                ctx.response_code = code;
+                stream.response_code = code;
 
                 const remove_rc = c.curl_multi_remove_handle(self.multi, easy_handle);
                 assert(remove_rc == c.CURLM_OK);
 
-                if (ctx.c_headers) |h| {
+                if (stream.c_headers) |h| {
                     c.curl_slist_free_all(h);
-                    ctx.c_headers = null;
+                    stream.c_headers = null;
                 }
 
-                if (ctx.stream) |stream| {
-                    _ = c.curl_easy_setopt(easy_handle, c.CURLOPT_SHARE, @as(?*anyopaque, null));
-                    stream.onTransferDone(ctx.result);
-                } else {
-                    // Notify waiting fiber/thread
-                    ctx.event.set(ctx.io);
-                }
+                _ = c.curl_easy_setopt(easy_handle, c.CURLOPT_SHARE, @as(?*anyopaque, null));
+                stream.onTransferDone(stream.result);
             }
         }
     }
@@ -1041,133 +1032,13 @@ pub const RequestBuilder = struct {
         return s;
     }
 
-    /// Send the HTTP request asynchronously and suspend until the response is ready.
-    pub fn send(self: RequestBuilder, io: std.Io) !Response {
-        const client = self.client;
-
-        // Apply concurrency rate-limiting if configured.
-        if (client.semaphore) |*sem| {
-            try sem.wait(io);
-        }
-        defer {
-            if (client.semaphore) |*sem| {
-                sem.post(io);
-            }
-        }
-
-        const easy = if (self.is_tainted)
-            try client.createFreshHandle()
-        else
-            try client.acquireHandle();
-
-        defer client.releaseHandle(easy, self.is_tainted);
-
-        var context = RequestContext{
-            .io = io,
-            .easy = easy,
-            .body_writer = std.Io.Writer.Allocating.init(client.allocator),
-            .c_headers = null,
-        };
-        errdefer if (context.body_writer) |*bw| bw.deinit();
-
-        try easy.setUrl(self.url);
-        try easy.setMethod(self.method);
-        if (self.method == .HEAD) {
-            try checkCode(
-                c.curl_easy_setopt(easy.handle, c.CURLOPT_NOBODY, @as(c_long, 1)),
-                &easy.diagnostics,
-            );
-        }
-        try easy.setWriter(&context.body_writer.?.writer);
-        try easy.setFollowLocation(self.follow_location);
-
-        if (self.timeout_ms) |ms| {
-            easy.timeout_ms = ms;
-        }
-        if (self.http_version) |ver| {
-            try easy.setHttpVersion(ver);
-        }
-        if (self.unix_socket_path) |path| {
-            try easy.setUnixSocketPath(path);
-        }
-        if (self.body_data) |b| {
-            try easy.setPostFields(b);
-        }
-
-        // Build native curl slist for custom headers
-        if (self.custom_headers.len > 0) {
-            var ch: ?*c.struct_curl_slist = null;
-            errdefer if (ch) |h| c.curl_slist_free_all(h);
-            for (self.custom_headers) |h| {
-                const line = try client.allocator.printSentinel(
-                    "{s}: {s}",
-                    .{ h.name, h.value },
-                    0,
-                );
-                defer client.allocator.free(line);
-                ch = c.curl_slist_append(ch, line.ptr) orelse return error.OutOfMemory;
-            }
-            context.c_headers = ch;
-            if (ch) |headers_list| {
-                try easy.setHeadersC(headers_list);
-            }
-        }
-        errdefer if (context.c_headers) |h| {
-            c.curl_slist_free_all(h);
-            context.c_headers = null;
-        };
-
-        // Apply common options (user agent, ca bundle, timeout)
-        try easy.setCommonOpts();
-
-        // Apply user configuration hook if present
-        if (self.config_hook) |hook| {
-            try hook(easy);
-        }
-
-        try easy.setPrivate(&context);
-
-        // Push to pending queue and wake up driver
-        {
-            client.queue_mutex.lock();
-            context.next = client.pending_queue;
-            client.pending_queue = &context;
-            client.queue_mutex.unlock();
-        }
-
-        // Wake driver thread if it is idle-waiting on idle_event or polling in curl_multi_poll
-        client.idle_event.set(client.io);
-        const wakeup_rc = c.curl_multi_wakeup(client.multi);
-        assert(wakeup_rc == c.CURLM_OK);
-
-        // Suspend current fiber/thread until completion.
-        // We protect this section from cancellation to prevent stack memory Use-After-Free
-        // (since `context` is stack-allocated) and to prevent easy handle state tearing
-        // while the driver thread is actively executing the transfer in curl_multi.
-        context.event.waitUncancelable(io);
-
-        if (context.result != c.CURLE_OK) {
-            // Note: context.body_writer.deinit() is handled by errdefer above!
-            if (context.result == c.CURLE_OPERATION_TIMEDOUT) {
-                return error.Timeout;
-            }
-            return error.HttpTransferFailed;
-        }
-
-        return Response{
-            .allocator = client.allocator,
-            .status_code = @intCast(context.response_code),
-            .body = try context.body_writer.?.toOwnedSlice(),
-        };
-    }
-
-    /// Send the HTTP request and return a StreamingResponse as soon as headers are received.
-    /// The response body can then be read incrementally via res.reader().
+    /// Send the HTTP request asynchronously and return a `Response` as soon as headers are received.
+    /// The response body can be read incrementally via `res.reader()` or fully buffered via `res.bodyAlloc()`.
     ///
-    /// Lifetime contract: The returned `StreamingResponse` must be closed (via `res.deinit()`)
+    /// Lifetime contract: The returned `Response` must be closed (via `res.deinit()`)
     /// before `client.deinit()` is called, as the active stream borrows internal resources (easy handle,
     /// connection share context, and semaphore permits) from the `Client`.
-    pub fn sendStreaming(self: RequestBuilder, io: std.Io) !StreamingResponse {
+    pub fn send(self: RequestBuilder, io: std.Io) !Response {
         const client = self.client;
 
         if (client.semaphore) |*sem| {
@@ -1194,16 +1065,10 @@ pub const RequestBuilder = struct {
         errdefer if (!stream_released) client.allocator.free(ring_buffer);
 
         stream.* = .{
-            .req = .{
-                .io = io,
-                .easy = easy,
-                .body_writer = null,
-                .c_headers = null,
-                .stream = stream,
-            },
             .client = client,
             .allocator = client.allocator,
-            .client_alive = std.atomic.Value(bool).init(true),
+            .io = io,
+            .easy = easy,
             .ref_count = std.atomic.Value(u32).init(2),
             .is_tainted = self.is_tainted,
             .follow_location = self.follow_location,
@@ -1236,30 +1101,17 @@ pub const RequestBuilder = struct {
         }
 
         // Custom headers
-        if (self.custom_headers.len > 0) {
-            var ch: ?*c.struct_curl_slist = null;
-            errdefer if (ch) |h| c.curl_slist_free_all(h);
-            for (self.custom_headers) |h| {
-                const line = try client.allocator.printSentinel(
-                    "{s}: {s}",
-                    .{ h.name, h.value },
-                    0,
-                );
-                defer client.allocator.free(line);
-                ch = c.curl_slist_append(ch, line.ptr) orelse return error.OutOfMemory;
-            }
-            stream.req.c_headers = ch;
-            ch = null;
-            if (stream.req.c_headers) |headers_list| {
-                try easy.setHeadersC(headers_list);
-            }
-        }
+        const ch = try buildHeaderSlist(client.allocator, self.custom_headers);
+        stream.c_headers = ch;
         errdefer if (!stream_released) {
-            if (stream.req.c_headers) |h| {
+            if (stream.c_headers) |h| {
                 c.curl_slist_free_all(h);
-                stream.req.c_headers = null;
+                stream.c_headers = null;
             }
         };
+        if (ch) |headers_list| {
+            try easy.setHeadersC(headers_list);
+        }
 
         try easy.setCommonOpts();
 
@@ -1272,7 +1124,7 @@ pub const RequestBuilder = struct {
         try checkCode(c.curl_easy_setopt(easy.handle, c.CURLOPT_HEADERFUNCTION, streamHeaderCallback), &easy.diagnostics);
         try checkCode(c.curl_easy_setopt(easy.handle, c.CURLOPT_HEADERDATA, stream), &easy.diagnostics);
 
-        try easy.setPrivate(&stream.req);
+        try easy.setPrivate(stream);
 
         // Register stream in client's active stream tracking list
         {
@@ -1289,8 +1141,8 @@ pub const RequestBuilder = struct {
         // Enqueue to pending queue and wake driver
         {
             client.queue_mutex.lock();
-            stream.req.next = client.pending_queue;
-            client.pending_queue = &stream.req;
+            stream.next = client.pending_queue;
+            client.pending_queue = stream;
             client.queue_mutex.unlock();
         }
 
@@ -1301,8 +1153,8 @@ pub const RequestBuilder = struct {
         // Wait until headers are received or transfer fails
         stream.header_event.waitUncancelable(io);
 
-        if (stream.req.result != c.CURLE_OK) {
-            const result = stream.req.result;
+        if (stream.result != c.CURLE_OK) {
+            const result = stream.result;
             stream_released = true;
             easy_released = true;
             stream.releaseRef();
@@ -1317,14 +1169,26 @@ pub const RequestBuilder = struct {
         }
 
         stream_released = true;
-        return StreamingResponse{
+        return Response{
             .client = client,
-            .status_code = @intCast(stream.req.response_code),
+            .status_code = @intCast(stream.response_code),
             .stream = stream,
             .semaphore_held = client.semaphore != null,
         };
     }
 };
+
+fn buildHeaderSlist(allocator: Allocator, entries: []const HeaderEntry) !?*c.struct_curl_slist {
+    if (entries.len == 0) return null;
+    var ch: ?*c.struct_curl_slist = null;
+    errdefer if (ch) |h| c.curl_slist_free_all(h);
+    for (entries) |h| {
+        const line = try allocator.printSentinel("{s}: {s}", .{ h.name, h.value }, 0);
+        defer allocator.free(line);
+        ch = c.curl_slist_append(ch, line.ptr) orelse return error.OutOfMemory;
+    }
+    return ch;
+}
 
 // -------------------------------------------------------------------------
 // Unit Tests
@@ -1558,9 +1422,14 @@ test "Client: transfer failure does not crash on body double free (offline local
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    // Must return HttpTransferFailed WITHOUT double-free crashing on partially-written body!
-    const res = client.get(url).timeout(3000).send(io);
-    try std.testing.expectError(error.HttpTransferFailed, res);
+    // In unified streaming model, send() succeeds as soon as 200 OK headers arrive,
+    // and transfer failure is safely reported during body read without double-free/leak.
+    var res = try client.get(url).timeout(3000).send(io);
+    defer res.deinit();
+    try std.testing.expectEqual(@as(u16, 200), res.status_code);
+
+    const body_res = res.bodyAlloc(allocator, 1024);
+    try std.testing.expectError(error.HttpTransferFailed, body_res);
 }
 
 test "Client: Response has no dangling easy_handle and pool reuse works (offline local)" {
@@ -1580,12 +1449,15 @@ test "Client: Response has no dangling easy_handle and pool reuse works (offline
         .headers(&.{.{ .name = "X-Test", .value = "1" }})
         .timeout(3000)
         .send(io);
-    defer res.deinit();
 
-    // Clean handle has been returned to pool, and Response body is intact
-    assert(client.pool.items.items.len == 1);
     assert(res.status_code == 200);
-    assert(std.mem.eql(u8, res.body, "OK"));
+    const body = try res.bodyAlloc(allocator, 1024);
+    defer allocator.free(body);
+    assert(std.mem.eql(u8, body, "OK"));
+
+    res.deinit();
+    // Clean handle has been returned to pool after res.deinit()
+    assert(client.pool.items.items.len == 1);
 }
 
 test "Client: fluent chaining works seamlessly on rvalues" {
@@ -1609,7 +1481,9 @@ test "Client: fluent chaining works seamlessly on rvalues" {
     defer res.deinit();
 
     assert(res.status_code == 200);
-    assert(std.mem.eql(u8, res.body, "pong"));
+    const body = try res.bodyAlloc(allocator, 1024);
+    defer allocator.free(body);
+    assert(std.mem.eql(u8, body, "pong"));
 }
 
 test "Client: HEAD request completes without waiting for body" {
@@ -1629,7 +1503,9 @@ test "Client: HEAD request completes without waiting for body" {
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
-    try std.testing.expectEqual(@as(usize, 0), res.body.len);
+    const body = try res.bodyAlloc(allocator, 1024);
+    defer allocator.free(body);
+    try std.testing.expectEqual(@as(usize, 0), body.len);
 }
 
 test "Client: shutdown drain cleans up in-flight requests without hanging" {
@@ -1651,7 +1527,7 @@ test "Client: shutdown drain cleans up in-flight requests without hanging" {
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
 }
 
-test "Client: sendStreaming reads entire body via reader" {
+test "Client: send reads entire body via reader" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1665,7 +1541,7 @@ test "Client: sendStreaming reads entire body via reader" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(3000).sendStreaming(io);
+    var res = try client.get(url).timeout(3000).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -1677,7 +1553,7 @@ test "Client: sendStreaming reads entire body via reader" {
     try std.testing.expectEqualStrings(payload, body);
 }
 
-test "Client: sendStreaming integrates with std.Io.Reader line delimiter" {
+test "Client: send integrates with std.Io.Reader line delimiter" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1691,7 +1567,7 @@ test "Client: sendStreaming integrates with std.Io.Reader line delimiter" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(3000).sendStreaming(io);
+    var res = try client.get(url).timeout(3000).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -1705,7 +1581,7 @@ test "Client: sendStreaming integrates with std.Io.Reader line delimiter" {
     try std.testing.expectEqualStrings("line3", l3);
 }
 
-test "Client: sendStreaming early deinit cancels in-flight transfer without leak" {
+test "Client: send early deinit cancels in-flight transfer without leak" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1719,7 +1595,7 @@ test "Client: sendStreaming early deinit cancels in-flight transfer without leak
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(3000).sendStreaming(io);
+    var res = try client.get(url).timeout(3000).send(io);
     var reader = res.reader();
     var small_buf: [4]u8 = undefined;
     const n = try reader.read(&small_buf);
@@ -1827,7 +1703,7 @@ fn startStallMockServer(
     return .{ .thread = thread, .port = port };
 }
 
-test "Client: sendStreaming 1MiB body backpressure and unpause without deadlock" {
+test "Client: send 1MiB body backpressure and unpause without deadlock" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1841,7 +1717,7 @@ test "Client: sendStreaming 1MiB body backpressure and unpause without deadlock"
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(5000).sendStreaming(io);
+    var res = try client.get(url).timeout(5000).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -1863,7 +1739,7 @@ test "Client: sendStreaming 1MiB body backpressure and unpause without deadlock"
     try std.testing.expect(reader.errorReason() == null);
 }
 
-test "Client: sendStreaming dual concurrent streams backpressure" {
+test "Client: send dual concurrent streams backpressure" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1883,9 +1759,9 @@ test "Client: sendStreaming dual concurrent streams backpressure" {
     const url2 = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s2.port}, 0);
     defer allocator.free(url2);
 
-    var res1 = try client.get(url1).timeout(5000).sendStreaming(io);
+    var res1 = try client.get(url1).timeout(5000).send(io);
     defer res1.deinit();
-    var res2 = try client.get(url2).timeout(5000).sendStreaming(io);
+    var res2 = try client.get(url2).timeout(5000).send(io);
     defer res2.deinit();
 
     var r1 = res1.reader();
@@ -1926,7 +1802,7 @@ test "Client: sendStreaming dual concurrent streams backpressure" {
     try std.testing.expectEqual(s2_size, n2_total);
 }
 
-test "Client: sendStreaming 1MiB early abort without memory leak" {
+test "Client: send 1MiB early abort without memory leak" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1939,7 +1815,7 @@ test "Client: sendStreaming 1MiB early abort without memory leak" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(5000).sendStreaming(io);
+    var res = try client.get(url).timeout(5000).send(io);
     var reader = res.reader();
 
     var small_buf: [4096]u8 = undefined;
@@ -1950,7 +1826,7 @@ test "Client: sendStreaming 1MiB early abort without memory leak" {
     res.deinit();
 }
 
-test "Client: sendStreaming stall timeout detection" {
+test "Client: send stall timeout detection" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1963,7 +1839,7 @@ test "Client: sendStreaming stall timeout detection" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(400).sendStreaming(io);
+    var res = try client.get(url).timeout(400).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -1982,7 +1858,7 @@ test "Client: sendStreaming stall timeout detection" {
     try std.testing.expectEqual(error.Timeout, reader.errorReason().?);
 }
 
-test "Client: client.deinit() cross-destruction with active StreamingResponse does not panic" {
+test "Client: client.deinit() cross-destruction with active Response does not panic" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1994,9 +1870,9 @@ test "Client: client.deinit() cross-destruction with active StreamingResponse do
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(5000).sendStreaming(io);
+    var res = try client.get(url).timeout(5000).send(io);
 
-    // Destroy client while StreamingResponse is still alive and streaming
+    // Destroy client while Response is still alive and streaming
     client.deinit();
 
     // Subsequent read on the orphaned stream must return error and not crash
@@ -2008,7 +1884,7 @@ test "Client: client.deinit() cross-destruction with active StreamingResponse do
     res.deinit();
 }
 
-test "Client: sendStreaming connect refused fails cleanly without UAF or double-free" {
+test "Client: send connect refused fails cleanly without UAF or double-free" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -2019,12 +1895,12 @@ test "Client: sendStreaming connect refused fails cleanly without UAF or double-
     const res = client.get("http://127.0.0.1:1/")
         .headers(&.{.{ .name = "X-Test", .value = "UAF-Check" }})
         .timeout(1000)
-        .sendStreaming(io);
+        .send(io);
 
     try std.testing.expectError(error.HttpTransferFailed, res);
 }
 
-test "Client: sendStreaming DNS failure fails cleanly without UAF or double-free" {
+test "Client: send DNS failure fails cleanly without UAF or double-free" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -2034,7 +1910,7 @@ test "Client: sendStreaming DNS failure fails cleanly without UAF or double-free
     const res = client.get("http://invalid.domain.that.does.not.exist.test/")
         .headers(&.{.{ .name = "X-Test", .value = "DNS-Check" }})
         .timeout(1000)
-        .sendStreaming(io);
+        .send(io);
 
     try std.testing.expectError(error.HttpTransferFailed, res);
 }
@@ -2158,7 +2034,7 @@ fn startRedirectLoopServer(io: std.Io, max_cycles: usize) !struct { thread: std.
     return .{ .thread = thread, .port = port };
 }
 
-test "Client: sendStreaming 0-byte empty body returns EOF immediately" {
+test "Client: send 0-byte empty body returns EOF immediately" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -2171,7 +2047,7 @@ test "Client: sendStreaming 0-byte empty body returns EOF immediately" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(3000).sendStreaming(io);
+    var res = try client.get(url).timeout(3000).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -2186,7 +2062,7 @@ test "Client: sendStreaming 0-byte empty body returns EOF immediately" {
     try std.testing.expect(reader.errorReason() == null);
 }
 
-test "Client: sendStreaming trickle read 1 byte per iteration with backpressure" {
+test "Client: send trickle read 1 byte per iteration with backpressure" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -2200,7 +2076,7 @@ test "Client: sendStreaming trickle read 1 byte per iteration with backpressure"
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(5000).sendStreaming(io);
+    var res = try client.get(url).timeout(5000).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -2220,7 +2096,7 @@ test "Client: sendStreaming trickle read 1 byte per iteration with backpressure"
     try std.testing.expect(reader.errorReason() == null);
 }
 
-test "Client: sendStreaming max_concurrency semaphore acquisition and release" {
+test "Client: send max_concurrency semaphore acquisition and release" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -2241,11 +2117,11 @@ test "Client: sendStreaming max_concurrency semaphore acquisition and release" {
     try std.testing.expectEqual(@as(usize, 2), client.semaphore.?.permits);
 
     // Stream 1 acquires 1 permit -> 1 left
-    var res1 = try client.get(url).timeout(3000).sendStreaming(io);
+    var res1 = try client.get(url).timeout(3000).send(io);
     try std.testing.expectEqual(@as(usize, 1), client.semaphore.?.permits);
 
     // Stream 2 acquires 1 permit -> 0 left (exhausted)
-    var res2 = try client.get(url).timeout(3000).sendStreaming(io);
+    var res2 = try client.get(url).timeout(3000).send(io);
     try std.testing.expectEqual(@as(usize, 0), client.semaphore.?.permits);
 
     // Deinit stream 1: releases 1 permit back to semaphore
@@ -2257,7 +2133,7 @@ test "Client: sendStreaming max_concurrency semaphore acquisition and release" {
     try std.testing.expectEqual(@as(usize, 2), client.semaphore.?.permits);
 }
 
-test "Client: sendStreaming redirect loop exceeds max redirects cleanly" {
+test "Client: send redirect loop exceeds max redirects cleanly" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -2281,12 +2157,12 @@ test "Client: sendStreaming redirect loop exceeds max redirects cleanly" {
     const res = client.get(url)
         .configure(LimitHook.hook)
         .timeout(3000)
-        .sendStreaming(io);
+        .send(io);
 
     try std.testing.expectError(error.HttpTransferFailed, res);
 }
 
-test "Client: sendStreaming double deinit is safe and idempotent" {
+test "Client: send double deinit is safe and idempotent" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -2299,7 +2175,7 @@ test "Client: sendStreaming double deinit is safe and idempotent" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(3000).sendStreaming(io);
+    var res = try client.get(url).timeout(3000).send(io);
 
     // Call deinit twice explicitly (e.g. simulating defer res.deinit() + manual res.deinit())
     res.deinit();

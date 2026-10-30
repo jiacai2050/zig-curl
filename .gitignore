@@ -22,3 +22,4 @@ libroot*
 *.o
 .zed/
 review.md
+.review/
