@@ -108,8 +108,9 @@
 //!
 const std = @import("std");
 const util = @import("util.zig");
-pub const checkCode = @import("errors.zig").checkCode;
-pub const Diagnostics = @import("errors.zig").Diagnostics;
+const errors = @import("errors.zig");
+pub const checkCode = errors.checkCode;
+pub const Diagnostics = errors.Diagnostics;
 
 pub const Easy = @import("Easy.zig");
 pub const Multi = @import("Multi.zig");
@@ -119,6 +120,13 @@ pub const Client = @import("Client.zig");
 pub const Response = Client.Response;
 pub const BodyReader = Client.BodyReader;
 pub const RequestBuilder = Client.RequestBuilder;
+pub const Header = Client.Header;
+pub const HeaderIterator = Client.HeaderIterator;
+pub const ResponseHeader = Client.ResponseHeader;
+pub const ResponseHeaderIterator = Client.ResponseHeaderIterator;
+pub const IterateHeadersOptions = Client.IterateHeadersOptions;
+pub const HttpError = errors.HttpError;
+pub const HeaderError = errors.HeaderError;
 
 pub const printLibcurlVersion = util.printLibcurlVersion;
 pub const hasParseHeaderSupport = util.hasParseHeaderSupport;
@@ -149,4 +157,3 @@ pub fn globalDeinit() void {
 test {
     std.testing.refAllDecls(@This());
 }
-

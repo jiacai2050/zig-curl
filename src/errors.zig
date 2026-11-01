@@ -63,6 +63,41 @@ pub fn checkCode(code: c.CURLcode, diagnostics: ?*Diagnostics) !void {
     return error.Curl;
 }
 
+pub const HttpError = error{
+    Timeout,
+    NameResolutionFailed,
+    ConnectionFailed,
+    ConnectionReset,
+    TlsHandshakeFailed,
+    CertificateVerificationFailed,
+    TooManyRedirects,
+    HttpConnectionClosed,
+    HttpTransferFailed,
+    CurlAborted,
+    ClientClosed,
+    OutOfMemory,
+    UploadNotRewindable,
+};
+
+pub fn httpErrorFrom(code: c.CURLcode) HttpError {
+    assert(code != c.CURLE_OK);
+    return switch (code) {
+        c.CURLE_OPERATION_TIMEDOUT => error.Timeout,
+        c.CURLE_COULDNT_RESOLVE_HOST, c.CURLE_COULDNT_RESOLVE_PROXY => error.NameResolutionFailed,
+        c.CURLE_COULDNT_CONNECT => error.ConnectionFailed,
+        c.CURLE_SSL_CONNECT_ERROR => error.TlsHandshakeFailed,
+        c.CURLE_PEER_FAILED_VERIFICATION => error.CertificateVerificationFailed,
+        c.CURLE_TOO_MANY_REDIRECTS => error.TooManyRedirects,
+        c.CURLE_GOT_NOTHING => error.HttpConnectionClosed,
+        c.CURLE_PARTIAL_FILE => error.HttpTransferFailed,
+        c.CURLE_RECV_ERROR, c.CURLE_SEND_ERROR => error.ConnectionReset,
+        c.CURLE_ABORTED_BY_CALLBACK => error.CurlAborted,
+        c.CURLE_OUT_OF_MEMORY => error.OutOfMemory,
+        c.CURLE_SEND_FAIL_REWIND => error.UploadNotRewindable,
+        else => error.HttpTransferFailed,
+    };
+}
+
 pub fn checkMCode(code: c.CURLMcode, diagnostics: ?*Diagnostics) !void {
     if (code == c.CURLM_OK) {
         return;
@@ -81,4 +116,22 @@ pub fn checkSHCode(code: c.CURLSHcode, diagnostics: ?*Diagnostics) !void {
     if (diagnostics) |diag| diag.error_code = .{ .sh_code = code };
 
     return error.Curl;
+}
+
+test "errors: httpErrorFrom mapping table" {
+    const testing = std.testing;
+    try testing.expectEqual(error.Timeout, httpErrorFrom(c.CURLE_OPERATION_TIMEDOUT));
+    try testing.expectEqual(error.NameResolutionFailed, httpErrorFrom(c.CURLE_COULDNT_RESOLVE_HOST));
+    try testing.expectEqual(error.NameResolutionFailed, httpErrorFrom(c.CURLE_COULDNT_RESOLVE_PROXY));
+    try testing.expectEqual(error.ConnectionFailed, httpErrorFrom(c.CURLE_COULDNT_CONNECT));
+    try testing.expectEqual(error.TlsHandshakeFailed, httpErrorFrom(c.CURLE_SSL_CONNECT_ERROR));
+    try testing.expectEqual(error.CertificateVerificationFailed, httpErrorFrom(c.CURLE_PEER_FAILED_VERIFICATION));
+    try testing.expectEqual(error.TooManyRedirects, httpErrorFrom(c.CURLE_TOO_MANY_REDIRECTS));
+    try testing.expectEqual(error.HttpConnectionClosed, httpErrorFrom(c.CURLE_GOT_NOTHING));
+    try testing.expectEqual(error.HttpTransferFailed, httpErrorFrom(c.CURLE_PARTIAL_FILE));
+    try testing.expectEqual(error.ConnectionReset, httpErrorFrom(c.CURLE_RECV_ERROR));
+    try testing.expectEqual(error.ConnectionReset, httpErrorFrom(c.CURLE_SEND_ERROR));
+    try testing.expectEqual(error.CurlAborted, httpErrorFrom(c.CURLE_ABORTED_BY_CALLBACK));
+    try testing.expectEqual(error.OutOfMemory, httpErrorFrom(c.CURLE_OUT_OF_MEMORY));
+    try testing.expectEqual(error.HttpTransferFailed, httpErrorFrom(c.CURLE_BAD_FUNCTION_ARGUMENT));
 }

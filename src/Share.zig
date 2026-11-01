@@ -20,10 +20,11 @@ const Self = @This();
 /// Number of lockable resources supported by libcurl.
 const lock_data_count = @as(usize, @intCast(c.CURL_LOCK_DATA_LAST));
 
-pub const SpinLock = struct {
+/// Raw spinlock without wrapped data, suitable for C callbacks (such as libcurl's CURLSH).
+pub const RawSpinLock = struct {
     state: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
-    pub fn lock(self: *SpinLock) void {
+    pub fn lock(self: *RawSpinLock) void {
         while (self.state.swap(true, .acquire)) {
             while (self.state.load(.monotonic)) {
                 std.atomic.spinLoopHint();
@@ -31,17 +32,51 @@ pub const SpinLock = struct {
         }
     }
 
-    pub fn unlock(self: *SpinLock) void {
+    pub fn unlock(self: *RawSpinLock) void {
         self.state.store(false, .release);
     }
 };
+
+/// Rust-style Data-wrapping SpinLock.
+/// Guarantees that the protected data can only be accessed while holding the lock.
+pub fn SpinLock(comptime T: type) type {
+    return struct {
+        raw: RawSpinLock = .{},
+        data: T,
+
+        const SpinLockType = @This();
+
+        pub fn init(data: T) SpinLockType {
+            return .{
+                .data = data,
+            };
+        }
+
+        pub const Guard = struct {
+            lock: *SpinLockType,
+            value: *T,
+
+            pub fn unlock(self: Guard) void {
+                self.lock.raw.unlock();
+            }
+        };
+
+        pub fn acquire(self: *SpinLockType) Guard {
+            self.raw.lock();
+            return Guard{
+                .lock = self,
+                .value = &self.data,
+            };
+        }
+    };
+}
 
 allocator: Allocator,
 handle: *c.CURLSH,
 diagnostics: Diagnostics,
 /// Dedicated spinlocks for each lockable resource type to minimize lock contention.
 /// libcurl only holds these locks for brief in-memory lookups.
-mutexes: [lock_data_count]SpinLock,
+mutexes: [lock_data_count]RawSpinLock,
 
 pub const Options = struct {
     share_dns: bool = true,
