@@ -391,6 +391,7 @@ pub const Response = struct {
         self.stream = null;
 
         const client = self.client;
+        stream.releaseSemaphore();
 
         stream.mutex.lock();
         const is_done = stream.eof;
@@ -441,6 +442,7 @@ pub const StreamContext = struct {
     headers_ready: bool = false,
     eof: bool = false,
     aborted: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    semaphore_released: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     err: ?anyerror = null,
     paused: bool = false,
     needs_unpause: bool = false,
@@ -488,6 +490,7 @@ pub const StreamContext = struct {
         self.headers_ready = false;
         self.eof = false;
         self.aborted.store(false, .release);
+        self.semaphore_released.store(false, .release);
         self.err = null;
         self.paused = false;
         self.needs_unpause = false;
@@ -558,6 +561,14 @@ pub const StreamContext = struct {
         self.releaseRef();
     }
 
+    fn releaseSemaphore(self: *StreamContext) void {
+        if (self.client.semaphore) |*semaphore| {
+            if (!self.semaphore_released.swap(true, .acq_rel)) {
+                semaphore.post(self.io);
+            }
+        }
+    }
+
     fn destroy(self: *StreamContext, allocator: Allocator) void {
         if (self.c_headers) |h| {
             c.curl_slist_free_all(h);
@@ -572,10 +583,7 @@ pub const StreamContext = struct {
 
     fn releaseRef(self: *StreamContext) void {
         if (self.ref_count.fetchSub(1, .acq_rel) == 1) {
-            // Release semaphore concurrency permit back to client
-            if (self.client.semaphore) |*sem| {
-                sem.post(self.io);
-            }
+            self.releaseSemaphore();
 
             if (self.c_headers) |h| {
                 c.curl_slist_free_all(h);
@@ -1490,6 +1498,7 @@ pub const RequestBuilder = struct {
         stream.mutex.unlock();
 
         if (transfer_failed) {
+            stream.releaseSemaphore();
             stream.releaseRef();
             if (stream_err) |e| return e;
             return errors.httpErrorFrom(result);
@@ -2199,20 +2208,25 @@ test "Client: send stall timeout detection" {
     try std.testing.expectEqual(error.Timeout, reader.errorReason().?);
 }
 
-test "Client: send connect refused fails cleanly without UAF or double-free" {
+test "Client: send connection failure fails cleanly without UAF or double-free" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
     var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
     defer client.deinit();
 
-    // 127.0.0.1:1 is guaranteed connection failed
+    // Windows runners do not reject this port immediately and report a timeout instead.
+    // Unix loopback stacks reject it immediately with a connection failure.
     const res = client.get("http://127.0.0.1:1/")
         .headers(&.{.{ .name = "X-Test", .value = "UAF-Check" }})
         .timeout(1000)
         .send(io);
 
-    try std.testing.expectError(error.ConnectionFailed, res);
+    if (comptime builtin.os.tag == .windows) {
+        try std.testing.expectError(error.Timeout, res);
+    } else {
+        try std.testing.expectError(error.ConnectionFailed, res);
+    }
 }
 
 test "Client: send DNS failure fails cleanly without UAF or double-free" {
@@ -2447,13 +2461,55 @@ test "Client: send max_concurrency semaphore acquisition and release" {
     var res2 = try client.get(url).timeout(3000).send(io);
     try std.testing.expectEqual(@as(usize, 0), client.semaphore.?.permits);
 
-    // Deinit stream 1: releases 1 permit back to semaphore
+    // Deinit stream 1: releases 1 permit back to semaphore immediately without waiting for driver
     res1.deinit();
     try std.testing.expectEqual(@as(usize, 1), client.semaphore.?.permits);
 
     // Deinit stream 2: releases second permit back
     res2.deinit();
     try std.testing.expectEqual(@as(usize, 2), client.semaphore.?.permits);
+}
+
+test "Client: max_concurrency=1 early deinit mid-stream releases permit immediately" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Start streaming server delivering 1MiB
+    const s = try startStreamingBytesServer(io, 1024 * 1024, 'S');
+    defer s.thread.join();
+
+    // Client with strict concurrency cap of 1
+    var client = try Self.init(allocator, io, .{
+        .max_concurrency = 1,
+        .load_ca_bundle = false,
+    });
+    defer client.deinit();
+
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
+    defer allocator.free(url);
+
+    // Initial permits: 1
+    try std.testing.expectEqual(@as(usize, 1), client.semaphore.?.permits);
+
+    // Request 1 acquires the only permit
+    var res1 = try client.get(url).timeout(5000).send(io);
+    try std.testing.expectEqual(@as(usize, 0), client.semaphore.?.permits);
+
+    // Read only a small chunk so the transfer is still active in the background
+    var reader = res1.reader();
+    var buf: [128]u8 = undefined;
+    const n = try reader.read(&buf);
+    try std.testing.expect(n > 0);
+
+    // Deinit mid-stream: permit must be restored immediately to 1
+    res1.deinit();
+    try std.testing.expectEqual(@as(usize, 1), client.semaphore.?.permits);
+
+    // Immediately acquire again without deadlocking or waiting for driver thread teardown
+    try client.semaphore.?.wait(io);
+    try std.testing.expectEqual(@as(usize, 0), client.semaphore.?.permits);
+    client.semaphore.?.post(io);
+    try std.testing.expectEqual(@as(usize, 1), client.semaphore.?.permits);
 }
 
 test "Client: send redirect loop exceeds max redirects cleanly" {

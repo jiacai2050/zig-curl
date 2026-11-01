@@ -2,21 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.6.0] - 2026-11-01
 
 ### Added
 
-- `Client.Response.getHeader` and `Client.Response.iterateHeaders`: thread-safe immutable snapshot access to parsed HTTP response headers without cross-thread libcurl handle access.
-- `Client.RequestBuilder.bodyReader`: streaming request body upload support from an active `std.Io.Reader`, supporting POST, PUT, and chunked/known-length uploads.
-- `Client.RequestBuilder.maxRedirects`: configurable redirect cap using `CURLOPT_MAXREDIRS` to prevent redirect loops.
-- `HttpError` typed error set and `errors.httpErrorFrom(code)` mapping `CURLcode` to idiomatic Zig errors (`Timeout`, `NameResolutionFailed`, `ConnectionFailed`, `TooManyRedirects`, `ClientClosed`, etc.).
-- Re-export `Header`, `HeaderIterator`, `ResponseHeader`, `ResponseHeaderIterator`, `IterateHeadersOptions`, `HttpError`, and `HeaderError` at package root.
+- **Asynchronous `Client`**: High-level, non-blocking HTTP client integrated with `std.Io` cooperative fibers, featuring fluent request builders (`get`, `post`, etc.), connection pooling, and optional semaphore throttling (`max_concurrency`).
+- **Response Ergonomics**: Incremental streaming (`res.reader()`), typed JSON parsing (`res.json()`), buffered reads (`res.bodyAlloc()`), and thread-safe header views (`res.getHeader()`, `res.iterateHeaders()`).
+- **Streaming Uploads**: `bodyReader()` on request builders for streaming uploads directly from `std.Io.Reader` (chunked POST and PUT).
+- **Typed Semantic Errors**: Granular `HttpError` set (`Timeout`, `ConnectionFailed`, `TooManyRedirects`, `ClientClosed`, `UploadNotRewindable`, etc.) mapped from `CURLcode`.
+- **Connection Sharing**: Added `Share` module (`CURLSH`) and `Easy.setShare()` for sharing DNS, connection, and TLS caches.
+- **Top-Level Re-exports**: `Client`, `Response`, `Share`, `HttpError`, and headers are now re-exported at the package root.
 
 ### Changed
 
-- Replaced ambiguous `CURLE_COULDNT_CONNECT` mapping from `ConnectionRefused` to `ConnectionFailed`.
-- Mapped client abort during shutdown (`abortStream`) to `error.ClientClosed`.
-- Note for consumers (Breaking error surface): Transfer failures are now typed via `HttpError` rather than defaulting to generic `error.HttpTransferFailed`. Redirect loops yield `error.TooManyRedirects`, timeouts yield `error.Timeout`, and shutdown aborts yield `error.ClientClosed`.
+- **Toolchain**: Upgraded to Zig 0.17.0.
+- **Response Lifecycle**: Responses must now be explicitly closed with `defer res.deinit()`.
 
 ## [0.5.1] - 2026-10-05
 
