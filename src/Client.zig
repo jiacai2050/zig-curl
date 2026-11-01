@@ -107,6 +107,7 @@
 //! - Non-blocking fiber suspension and resumption via `std.Io.Event`
 //! - Event-driven driver loop with zero idle CPU busy-wait
 const std = @import("std");
+const builtin = @import("builtin");
 const errors = @import("errors.zig");
 const util = @import("util.zig");
 const Easy = @import("Easy.zig");
@@ -124,6 +125,18 @@ const SpinLock = Share.SpinLock;
 const RawSpinLock = Share.RawSpinLock;
 const ResizableBuffer = util.ResizableBuffer;
 const Self = @This();
+
+fn setTestReceiveTimeout(stream: std.Io.net.Stream) void {
+    if (comptime builtin.os.tag == .windows) return;
+
+    const tv = std.posix.timeval{ .sec = 2, .usec = 0 };
+    _ = std.posix.setsockopt(
+        stream.socket.handle,
+        std.posix.SOL.SOCKET,
+        std.posix.SO.RCVTIMEO,
+        std.mem.asBytes(&tv),
+    ) catch {};
+}
 
 pub const Header = ResponseHeader;
 pub const HeaderIterator = ResponseHeaderIterator;
@@ -177,6 +190,10 @@ const HeaderOffset = struct {
     val_start: u32,
     val_len: u32,
 };
+
+comptime {
+    assert(@sizeOf(HeaderOffset) == 16);
+}
 
 /// Iterator over captured response headers.
 ///
@@ -374,9 +391,6 @@ pub const Response = struct {
         self.stream = null;
 
         const client = self.client;
-        if (client.semaphore) |*sem| {
-            sem.post(stream.io);
-        }
 
         stream.mutex.lock();
         const is_done = stream.eof;
@@ -384,7 +398,8 @@ pub const Response = struct {
 
         if (!is_done) {
             stream.aborted.store(true, .release);
-            client.idle_event.set(client.io);
+            // Driver thread is actively in curl_multi_poll or executing; curl_multi_wakeup
+            // is sufficient to wake it. idle_event.set is omitted as driver is not idle.
             _ = c.curl_multi_wakeup(client.multi);
         }
 
@@ -393,6 +408,15 @@ pub const Response = struct {
 };
 
 pub const StreamContext = struct {
+    // Internal buffer size constants
+    pub const ring_buffer_bytes_max: usize = 64 * 1024;
+    pub const ring_unpause_threshold_bytes: usize = 16 * 1024;
+
+    comptime {
+        assert(ring_unpause_threshold_bytes > 0);
+        assert(ring_unpause_threshold_bytes < ring_buffer_bytes_max);
+    }
+
     client: *Self,
     allocator: Allocator,
     io: std.Io,
@@ -406,13 +430,17 @@ pub const StreamContext = struct {
     active_prev: ?*StreamContext = null,
     active_next: ?*StreamContext = null,
 
-    ref_count: std.atomic.Value(u32),
+    // Reference count initialized to 2:
+    // - 1 reference held by the background driver thread (while the transfer is active in curl_multi)
+    // - 1 reference held by the caller / Response handle (released on Response.deinit or send() failure)
+    // The underlying Easy handle and StreamContext are only recycled or destroyed when both have finished.
+    ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(2),
     mutex: RawSpinLock = .{},
     header_event: std.Io.Event = .unset,
     read_event: std.Io.Event = .unset,
     headers_ready: bool = false,
     eof: bool = false,
-    aborted: std.atomic.Value(bool),
+    aborted: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     err: ?anyerror = null,
     paused: bool = false,
     needs_unpause: bool = false,
@@ -425,12 +453,71 @@ pub const StreamContext = struct {
     header_bytes: std.ArrayList(u8) = .empty,
     headers: std.ArrayList(HeaderOffset) = .empty,
 
-    ring_buffer: [64 * 1024]u8 = undefined,
+    ring_buffer: [ring_buffer_bytes_max]u8 = undefined,
     ring_head: usize = 0,
     ring_count: usize = 0,
 
-    fn getHeaderByIndex(self: *const StreamContext, idx: usize) ResponseHeader {
-        const off = self.headers.items[idx];
+    fn reset(
+        self: *StreamContext,
+        client: *Self,
+        io: std.Io,
+        easy: *Easy,
+        is_tainted: bool,
+        follow_location: bool,
+        upload_reader: ?*Reader,
+    ) void {
+        assert(self.active_prev == null);
+        assert(self.active_next == null);
+
+        self.client = client;
+        self.allocator = client.allocator;
+        self.io = io;
+        self.easy = easy;
+        self.result = c.CURLE_OK;
+        self.response_code = 0;
+        if (self.c_headers) |h| {
+            c.curl_slist_free_all(h);
+            self.c_headers = null;
+        }
+        self.next = null;
+        self.active_prev = null;
+        self.active_next = null;
+        self.ref_count.store(2, .release);
+        self.header_event.reset();
+        self.read_event.reset();
+        self.headers_ready = false;
+        self.eof = false;
+        self.aborted.store(false, .release);
+        self.err = null;
+        self.paused = false;
+        self.needs_unpause = false;
+        self.is_tainted = is_tainted;
+        self.follow_location = follow_location;
+        self.upload_reader = upload_reader;
+
+        // Shrink header capacity if oversized from a previous unusually large response
+        const header_bytes_max_retention: usize = 16 * 1024;
+        if (self.header_bytes.capacity > header_bytes_max_retention) {
+            self.header_bytes.deinit(self.allocator);
+            self.header_bytes = .empty;
+        } else {
+            self.header_bytes.clearRetainingCapacity();
+        }
+
+        const headers_max_retention: usize = 128;
+        if (self.headers.capacity > headers_max_retention) {
+            self.headers.deinit(self.allocator);
+            self.headers = .empty;
+        } else {
+            self.headers.clearRetainingCapacity();
+        }
+
+        self.ring_head = 0;
+        self.ring_count = 0;
+    }
+
+    fn getHeaderByIndex(self: *const StreamContext, index: usize) ResponseHeader {
+        const off = self.headers.items[index];
         const bytes = self.header_bytes.items;
         return .{
             .name = bytes[off.name_start .. off.name_start + off.name_len],
@@ -471,28 +558,31 @@ pub const StreamContext = struct {
         self.releaseRef();
     }
 
+    fn destroy(self: *StreamContext, allocator: Allocator) void {
+        if (self.c_headers) |h| {
+            c.curl_slist_free_all(h);
+            self.c_headers = null;
+        }
+        self.header_bytes.deinit(allocator);
+        self.headers.deinit(allocator);
+        self.easy.deinit();
+        allocator.destroy(self.easy);
+        allocator.destroy(self);
+    }
+
     fn releaseRef(self: *StreamContext) void {
         if (self.ref_count.fetchSub(1, .acq_rel) == 1) {
-            const allocator = self.allocator;
-            const easy = self.easy;
-            const is_tainted = self.is_tainted;
+            // Release semaphore concurrency permit back to client
+            if (self.client.semaphore) |*sem| {
+                sem.post(self.io);
+            }
 
             if (self.c_headers) |h| {
                 c.curl_slist_free_all(h);
                 self.c_headers = null;
             }
 
-            self.header_bytes.deinit(allocator);
-            self.headers.deinit(allocator);
-
-            if (!is_tainted) {
-                self.client.releaseHandle(easy, false);
-            } else {
-                easy.deinit();
-                allocator.destroy(easy);
-            }
-
-            allocator.destroy(self);
+            self.client.releaseHandle(self, self.is_tainted);
         }
     }
 
@@ -503,39 +593,37 @@ pub const StreamContext = struct {
             self.mutex.lock();
 
             if (self.ring_count > 0) {
-                const to_copy = @min(dest.len, self.ring_count);
+                const bytes_to_copy = @min(dest.len, self.ring_count);
 
                 // Copy from circular ring_buffer using at most two slice copies
-                const first_part = @min(to_copy, self.ring_buffer.len - self.ring_head);
-                @memcpy(dest[0..first_part], self.ring_buffer[self.ring_head .. self.ring_head + first_part]);
+                const bytes_first_copy = @min(bytes_to_copy, self.ring_buffer.len - self.ring_head);
+                @memcpy(dest[0..bytes_first_copy], self.ring_buffer[self.ring_head .. self.ring_head + bytes_first_copy]);
 
-                const second_part = to_copy - first_part;
-                if (second_part > 0) {
-                    @memcpy(dest[first_part..to_copy], self.ring_buffer[0..second_part]);
+                const bytes_second_copy = bytes_to_copy - bytes_first_copy;
+                if (bytes_second_copy > 0) {
+                    @memcpy(dest[bytes_first_copy..bytes_to_copy], self.ring_buffer[0..bytes_second_copy]);
                 }
 
-                self.ring_head = (self.ring_head + to_copy) % self.ring_buffer.len;
-                self.ring_count -= to_copy;
+                self.ring_head = (self.ring_head + bytes_to_copy) % self.ring_buffer.len;
+                self.ring_count -= bytes_to_copy;
 
                 var should_wakeup_driver = false;
                 if (self.paused) {
                     const free_space = self.ring_buffer.len - self.ring_count;
-                    if (free_space >= 16384) {
+                    if (free_space >= ring_unpause_threshold_bytes) {
                         self.paused = false;
                         self.needs_unpause = true;
                         should_wakeup_driver = true;
                     }
                 }
 
-                self.read_event.reset();
-                self.mutex.unlock();
-
                 if (should_wakeup_driver) {
-                    self.client.idle_event.set(self.client.io);
                     assert(c.curl_multi_wakeup(self.client.multi) == c.CURLM_OK);
                 }
 
-                return to_copy;
+                self.mutex.unlock();
+
+                return bytes_to_copy;
             }
 
             if (self.eof) {
@@ -545,6 +633,7 @@ pub const StreamContext = struct {
                 return 0; // EOF
             }
 
+            self.read_event.reset();
             self.mutex.unlock();
             self.read_event.waitUncancelable(self.io);
         }
@@ -552,20 +641,19 @@ pub const StreamContext = struct {
 };
 
 const HandlePool = struct {
-    items: SpinLock(std.ArrayList(*Easy)) = .init(.empty),
+    items: SpinLock(std.ArrayList(*StreamContext)) = .init(.empty),
 
     fn deinit(self: *HandlePool, allocator: Allocator) void {
         var guard = self.items.acquire();
         defer guard.unlock();
 
-        for (guard.value.items) |easy| {
-            easy.deinit();
-            allocator.destroy(easy);
+        for (guard.value.items) |stream| {
+            stream.destroy(allocator);
         }
         guard.value.deinit(allocator);
     }
 
-    fn acquire(self: *HandlePool) ?*Easy {
+    fn acquire(self: *HandlePool) ?*StreamContext {
         var guard = self.items.acquire();
         defer guard.unlock();
 
@@ -581,17 +669,16 @@ const HandlePool = struct {
         return guard.value.items.len;
     }
 
-    fn release(self: *HandlePool, allocator: Allocator, easy: *Easy) !void {
+    fn release(self: *HandlePool, allocator: Allocator, stream: *StreamContext) !void {
         var guard = self.items.acquire();
         defer guard.unlock();
 
         // Limit maximum pool capacity to prevent unbounded idle memory growth.
         const pool_max_capacity = 64;
         if (guard.value.items.len < pool_max_capacity) {
-            try guard.value.append(allocator, easy);
+            try guard.value.append(allocator, stream);
         } else {
-            easy.deinit();
-            allocator.destroy(easy);
+            stream.destroy(allocator);
         }
     }
 };
@@ -607,7 +694,14 @@ pub const Options = struct {
     load_ca_bundle: bool = true,
     /// Maximum concurrent in-flight HTTP requests allowed.
     /// When specified, `send` will wait on a `std.Io.Semaphore` before dispatching.
+    /// The concurrency permit is held for the entire transfer lifecycle and returned
+    /// when the stream's reference count drops to zero (i.e. both caller Response and
+    /// driver background transfer have completed or aborted).
     max_concurrency: ?usize = null,
+    /// Maximum duration (in milliseconds) to drain active in-flight transfers during client.deinit().
+    /// Defaults to 5000ms (5 seconds). Setting to 0 disables draining entirely, immediately
+    /// aborting all active transfers. Any transfers still active after this window will be cancelled.
+    shutdown_timeout_ms: usize = 5000,
 };
 
 pub fn init(allocator: Allocator, io: std.Io, options: Options) !*Self {
@@ -702,14 +796,14 @@ pub const patch = makeVerb(.PATCH);
 // Internal Engine Execution
 // -------------------------------------------------------------------------
 
-fn acquireHandle(self: *Self) !*Easy {
-    if (self.pool.acquire()) |easy| {
-        return easy;
+fn acquireStream(self: *Self) !*StreamContext {
+    if (self.pool.acquire()) |stream| {
+        return stream;
     }
-    return self.createFreshHandle();
+    return self.createFreshStream();
 }
 
-fn createFreshHandle(self: *Self) !*Easy {
+fn createFreshStream(self: *Self) !*StreamContext {
     const easy = try self.allocator.create(Easy);
     errdefer self.allocator.destroy(easy);
 
@@ -720,26 +814,38 @@ fn createFreshHandle(self: *Self) !*Easy {
 
     // Attach global shared handle to enable connection and cache reuse.
     try easy.setShare(self.share.handle);
-    return easy;
+
+    const stream = try self.allocator.create(StreamContext);
+    errdefer self.allocator.destroy(stream);
+
+    stream.* = .{
+        .client = self,
+        .allocator = self.allocator,
+        .io = self.io,
+        .easy = easy,
+    };
+    return stream;
 }
 
-fn releaseHandle(self: *Self, easy: *Easy, is_tainted: bool) void {
+fn releaseHandle(self: *Self, stream: *StreamContext, is_tainted: bool) void {
+    if (stream.c_headers) |h| {
+        c.curl_slist_free_all(h);
+        stream.c_headers = null;
+    }
+
     if (is_tainted) {
         // Tainted handles are disposable to prevent configuration pollution.
-        easy.deinit();
-        self.allocator.destroy(easy);
+        stream.destroy(self.allocator);
     } else {
-        easy.reset();
+        stream.easy.reset();
         // Re-attach share handle after curl_easy_reset.
         // If re-attaching fails, gracefully degrade by destroying the handle rather than causing UB.
-        easy.setShare(self.share.handle) catch {
-            easy.deinit();
-            self.allocator.destroy(easy);
+        stream.easy.setShare(self.share.handle) catch {
+            stream.destroy(self.allocator);
             return;
         };
-        self.pool.release(self.allocator, easy) catch {
-            easy.deinit();
-            self.allocator.destroy(easy);
+        self.pool.release(self.allocator, stream) catch {
+            stream.destroy(self.allocator);
         };
     }
 }
@@ -894,9 +1000,9 @@ fn streamHeaderCallback(
     } else {
         // Parse "Header-Name: Value\r\n" into contiguous buffer outside the spinlock
         // to eliminate 2 individual heap allocations per header.
-        if (std.mem.indexOfScalar(u8, line, ':')) |colon_idx| {
-            const raw_name = std.mem.trim(u8, line[0..colon_idx], " \t\r\n");
-            const raw_value = std.mem.trim(u8, line[colon_idx + 1 ..], " \t\r\n");
+        if (std.mem.indexOfScalar(u8, line, ':')) |colon_index| {
+            const raw_name = std.mem.trim(u8, line[0..colon_index], " \t\r\n");
+            const raw_value = std.mem.trim(u8, line[colon_index + 1 ..], " \t\r\n");
 
             const prev_len = stream.header_bytes.items.len;
             stream.header_bytes.appendSlice(stream.allocator, raw_name) catch |e| return stream.headerFail(e);
@@ -939,8 +1045,11 @@ fn streamWriteCallback(
     assert(stream.headers_ready);
 
     if (stream.aborted.load(.acquire)) {
+        if (stream.err == null) {
+            stream.err = error.ClientClosed;
+        }
         stream.mutex.unlock();
-        return @as(usize, @intCast(c.CURL_WRITEFUNC_PAUSE));
+        return 0; // Abort transfer immediately with consistent ClientClosed classification
     }
 
     const available = stream.ring_buffer.len - stream.ring_count;
@@ -952,12 +1061,12 @@ fn streamWriteCallback(
 
     const bytes: [*]const u8 = @ptrCast(ptr);
     const ring_tail = (stream.ring_head + stream.ring_count) % stream.ring_buffer.len;
-    const first_part = @min(total_bytes, stream.ring_buffer.len - ring_tail);
-    @memcpy(stream.ring_buffer[ring_tail .. ring_tail + first_part], bytes[0..first_part]);
+    const bytes_first_copy = @min(total_bytes, stream.ring_buffer.len - ring_tail);
+    @memcpy(stream.ring_buffer[ring_tail .. ring_tail + bytes_first_copy], bytes[0..bytes_first_copy]);
 
-    const second_part = total_bytes - first_part;
-    if (second_part > 0) {
-        @memcpy(stream.ring_buffer[0..second_part], bytes[first_part..total_bytes]);
+    const bytes_second_copy = total_bytes - bytes_first_copy;
+    if (bytes_second_copy > 0) {
+        @memcpy(stream.ring_buffer[0..bytes_second_copy], bytes[bytes_first_copy..total_bytes]);
     }
     stream.ring_count += total_bytes;
 
@@ -997,22 +1106,23 @@ fn driverLoop(self: *Self) void {
         self.processDoneTransfers();
     }
 
-    // Drain remaining transfers on shutdown with bounded iterations (max ~5s).
-    // Currently bounded to 100 iterations with 50ms polling (~5000ms maximum window).
-    // TODO: Consider exposing `shutdown_drain_timeout_ms` in `Client.Options` for environments
-    // with strict graceful-termination deadlines (e.g. Kubernetes SIGTERM requiring shutdown within 1-2s).
+    // Drain remaining transfers on shutdown with bounded iterations.
+    // Iterations are derived dynamically from options.shutdown_timeout_ms.
     self.drainPendingQueue();
     self.maintainActiveStreams();
-    var still_running: c_int = 1;
-    var drain_iters: usize = 0;
-    while (still_running > 0 and drain_iters < 100) : (drain_iters += 1) {
-        self.maintainActiveStreams();
-        const drain_perform_rc = c.curl_multi_perform(self.multi, &still_running);
-        assert(drain_perform_rc == c.CURLM_OK);
-        self.processDoneTransfers();
-        var num_fds: c_int = 0;
-        const drain_poll_rc = c.curl_multi_poll(self.multi, null, 0, 50, &num_fds);
-        assert(drain_poll_rc == c.CURLM_OK);
+    if (self.active_list != null) {
+        var still_running: c_int = 1;
+        var drain_elapsed: usize = 0;
+        const poll_step_ms: usize = 50;
+        while (still_running > 0 and drain_elapsed < self.options.shutdown_timeout_ms) : (drain_elapsed += poll_step_ms) {
+            self.maintainActiveStreams();
+            const drain_perform_rc = c.curl_multi_perform(self.multi, &still_running);
+            assert(drain_perform_rc == c.CURLM_OK);
+            self.processDoneTransfers();
+            var num_fds: c_int = 0;
+            const drain_poll_rc = c.curl_multi_poll(self.multi, null, 0, @intCast(poll_step_ms), &num_fds);
+            assert(drain_poll_rc == c.CURLM_OK);
+        }
     }
 
     // If any active transfers remain in multi after shutdown drain, abort and remove them
@@ -1041,14 +1151,25 @@ fn driverLoop(self: *Self) void {
 }
 
 fn drainPendingQueue(self: *Self) void {
-    var item: ?*StreamContext = null;
+    var raw_list: ?*StreamContext = null;
     {
         var guard = self.pending_queue.acquire();
-        item = guard.value.*;
+        raw_list = guard.value.*;
         guard.value.* = null;
         guard.unlock();
     }
 
+    // Reverse the LIFO push order to restore natural FIFO request submission
+    var fifo_head: ?*StreamContext = null;
+    var curr = raw_list;
+    while (curr) |stream| {
+        const next = stream.next;
+        stream.next = fifo_head;
+        fifo_head = stream;
+        curr = next;
+    }
+
+    var item = fifo_head;
     while (item) |stream| {
         const next = stream.next;
         const rc = c.curl_multi_add_handle(self.multi, stream.easy.handle);
@@ -1232,46 +1353,36 @@ pub const RequestBuilder = struct {
         return s;
     }
 
-    /// Send the HTTP request asynchronously and return a `Response` as soon as headers are received.
-    /// The response body can be read incrementally via `res.reader()` or fully buffered via `res.bodyAlloc()`.
-    ///
-    /// Lifetime contract: The returned `Response` must be closed (via `res.deinit()`)
-    /// before `client.deinit()` is called, as the active stream borrows internal resources (easy handle,
-    /// connection share context, and semaphore permits) from the `Client`.
-    pub fn send(self: RequestBuilder, io: std.Io) !Response {
+    fn setupAndEnqueue(
+        self: RequestBuilder,
+        io: std.Io,
+    ) !*StreamContext {
+        assert(self.url.len > 0);
         const client = self.client;
 
         if (client.semaphore) |*sem| {
             try sem.wait(io);
         }
-        var sem_released = false;
         errdefer if (client.semaphore) |*sem| {
-            if (!sem_released) sem.post(io);
+            sem.post(io);
         };
 
-        const easy = if (self.is_tainted)
-            try client.createFreshHandle()
+        const stream = if (self.is_tainted)
+            try client.createFreshStream()
         else
-            try client.acquireHandle();
+            try client.acquireStream();
 
-        var easy_released = false;
-        errdefer if (!easy_released) client.releaseHandle(easy, self.is_tainted);
+        errdefer client.releaseHandle(stream, self.is_tainted);
 
-        var stream_released = false;
-        const stream = try client.allocator.create(StreamContext);
-        errdefer if (!stream_released) client.allocator.destroy(stream);
-
-        stream.* = .{
-            .client = client,
-            .allocator = client.allocator,
-            .io = io,
-            .easy = easy,
-            .ref_count = std.atomic.Value(u32).init(2),
-            .is_tainted = self.is_tainted,
-            .follow_location = self.follow_location,
-            .upload_reader = self.body_reader,
-            .aborted = std.atomic.Value(bool).init(false),
-        };
+        stream.reset(
+            client,
+            io,
+            stream.easy,
+            self.is_tainted,
+            self.follow_location,
+            self.body_reader,
+        );
+        const easy = stream.easy;
 
         try easy.setUrl(self.url);
         try easy.setMethod(self.method);
@@ -1320,12 +1431,6 @@ pub const RequestBuilder = struct {
         // Custom headers
         const ch = try buildHeaderSlist(client.allocator, self.custom_headers);
         stream.c_headers = ch;
-        errdefer if (!stream_released) {
-            if (stream.c_headers) |h| {
-                c.curl_slist_free_all(h);
-                stream.c_headers = null;
-            }
-        };
         if (ch) |headers_list| {
             try easy.setHeadersC(headers_list);
         }
@@ -1349,7 +1454,8 @@ pub const RequestBuilder = struct {
 
         try easy.setPrivate(stream);
 
-        // Enqueue to pending queue and wake driver
+        // Enqueue to pending queue and wake driver.
+        // Once enqueued, ownership is managed by the driver thread and Response.
         {
             var guard = client.pending_queue.acquire();
             defer guard.unlock();
@@ -1360,6 +1466,18 @@ pub const RequestBuilder = struct {
         client.idle_event.set(client.io);
         const wakeup_rc = c.curl_multi_wakeup(client.multi);
         assert(wakeup_rc == c.CURLM_OK);
+
+        return stream;
+    }
+
+    /// Send the HTTP request asynchronously and return a `Response` as soon as headers are received.
+    /// The response body can be read incrementally via `res.reader()` or fully buffered via `res.bodyAlloc()`.
+    ///
+    /// Lifetime contract: The returned `Response` must be closed (via `res.deinit()`)
+    /// before `client.deinit()` is called, as the active stream borrows internal resources (easy handle,
+    /// connection share context, and semaphore permits) from the `Client`.
+    pub fn send(self: RequestBuilder, io: std.Io) !Response {
+        const stream = try self.setupAndEnqueue(io);
 
         // Wait until headers are received or transfer fails
         stream.header_event.waitUncancelable(io);
@@ -1372,20 +1490,13 @@ pub const RequestBuilder = struct {
         stream.mutex.unlock();
 
         if (transfer_failed) {
-            stream_released = true;
-            easy_released = true;
             stream.releaseRef();
-            if (client.semaphore) |*sem| {
-                sem.post(io);
-                sem_released = true;
-            }
             if (stream_err) |e| return e;
             return errors.httpErrorFrom(result);
         }
 
-        stream_released = true;
         return Response{
-            .client = client,
+            .client = self.client,
             .status_code = @intCast(response_code),
             .stream = stream,
         };
@@ -1397,9 +1508,16 @@ fn buildHeaderSlist(allocator: Allocator, entries: []const HeaderEntry) !?*c.str
     var ch: ?*c.struct_curl_slist = null;
     errdefer if (ch) |h| c.curl_slist_free_all(h);
     for (entries) |h| {
-        const line = try allocator.printSentinel("{s}: {s}", .{ h.name, h.value }, 0);
-        defer allocator.free(line);
-        ch = c.curl_slist_append(ch, line.ptr) orelse return error.OutOfMemory;
+        // Use stack buffer for common headers to eliminate heap allocation.
+        // Falls back to allocator only if the header line exceeds the stack capacity.
+        var stack_buf: [512]u8 = undefined;
+        if (std.fmt.bufPrintSentinel(&stack_buf, "{s}: {s}", .{ h.name, h.value }, 0)) |line| {
+            ch = c.curl_slist_append(ch, line.ptr) orelse return error.OutOfMemory;
+        } else |_| {
+            const line = try allocator.printSentinel("{s}: {s}", .{ h.name, h.value }, 0);
+            defer allocator.free(line);
+            ch = c.curl_slist_append(ch, line.ptr) orelse return error.OutOfMemory;
+        }
     }
     return ch;
 }
@@ -1436,21 +1554,21 @@ test "Client: handle pool reuse and taint isolation" {
     // Pool starts empty
     assert(client.pool.len() == 0);
 
-    // Acquire a clean handle
-    const h1 = try client.acquireHandle();
+    // Acquire a clean stream
+    const s1 = try client.acquireStream();
     assert(client.pool.len() == 0);
 
-    // Release clean handle -> returns to pool
-    client.releaseHandle(h1, false);
+    // Release clean stream -> returns to pool
+    client.releaseHandle(s1, false);
     assert(client.pool.len() == 1);
 
-    // Acquire another handle -> should reuse from pool
-    const h2 = try client.acquireHandle();
-    assert(h2 == h1);
+    // Acquire another stream -> should reuse from pool
+    const s2 = try client.acquireStream();
+    assert(s2 == s1);
     assert(client.pool.len() == 0);
 
-    // Release tainted handle -> destroyed immediately, pool remains empty
-    client.releaseHandle(h2, true);
+    // Release tainted stream -> destroyed immediately, pool remains empty
+    client.releaseHandle(s2, true);
     assert(client.pool.len() == 0);
 }
 
@@ -1569,8 +1687,7 @@ fn startMockServer(
             defer stream.close(ctx.io);
 
             // Configure socket receive timeout to prevent test deadlock if client fails to send
-            const tv = std.posix.timeval{ .sec = 2, .usec = 0 };
-            _ = std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
+            setTestReceiveTimeout(stream);
 
             var read_buf: [4096]u8 = undefined;
             var reader = std.Io.net.Stream.Reader.init(stream, ctx.io, &read_buf);
@@ -1846,8 +1963,7 @@ fn startStreamingBytesServer(
             defer stream.close(ctx.io);
 
             // Configure socket receive timeout to prevent test deadlock if client fails to send
-            const tv = std.posix.timeval{ .sec = 2, .usec = 0 };
-            _ = std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
+            setTestReceiveTimeout(stream);
 
             var read_buf: [4096]u8 = undefined;
             var reader = std.Io.net.Stream.Reader.init(stream, ctx.io, &read_buf);
@@ -1902,8 +2018,7 @@ fn startStallMockServer(
             defer stream.close(ctx.io);
 
             // Configure socket receive timeout to prevent test deadlock if client fails to send
-            const tv = std.posix.timeval{ .sec = 2, .usec = 0 };
-            _ = std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
+            setTestReceiveTimeout(stream);
 
             var read_buf: [4096]u8 = undefined;
             var reader = std.Io.net.Stream.Reader.init(stream, ctx.io, &read_buf);
@@ -2137,8 +2252,7 @@ fn startEmptyBodyServer(io: std.Io) !struct { thread: std.Thread, port: u16 } {
             defer stream.close(ctx.io);
 
             // Configure socket receive timeout to prevent test deadlock if client fails to send
-            const tv = std.posix.timeval{ .sec = 2, .usec = 0 };
-            _ = std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
+            setTestReceiveTimeout(stream);
 
             var read_buf: [4096]u8 = undefined;
             var reader = std.Io.net.Stream.Reader.init(stream, ctx.io, &read_buf);
@@ -2506,8 +2620,7 @@ fn startEchoServer(io: std.Io) !struct { thread: std.Thread, port: u16 } {
             defer stream.close(ctx.io);
 
             // Configure socket receive timeout to prevent test deadlock if client fails to send
-            const tv = std.posix.timeval{ .sec = 2, .usec = 0 };
-            _ = std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
+            setTestReceiveTimeout(stream);
 
             var read_buf: [4096]u8 = undefined;
             var reader = std.Io.net.Stream.Reader.init(stream, ctx.io, &read_buf);

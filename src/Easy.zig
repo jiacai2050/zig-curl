@@ -269,7 +269,11 @@ pub fn setUrl(self: *Self, url: [:0]const u8) !void {
 }
 
 pub fn setMaxRedirects(self: *Self, redirects: u32) !void {
-    try checkCode(c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, @as(c_long, redirects)), &self.diagnostics);
+    const redirects_c_long = std.math.cast(c_long, redirects) orelse return error.InvalidRedirectCount;
+    try checkCode(
+        c.curl_easy_setopt(self.handle, c.CURLOPT_MAXREDIRS, redirects_c_long),
+        &self.diagnostics,
+    );
 }
 
 pub fn setMethod(self: *Self, method: Method) !void {
