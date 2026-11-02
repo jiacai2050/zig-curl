@@ -14,6 +14,15 @@ const std = @import("std");
 const curl = @import("curl");
 const Client = curl.Client;
 
+fn msTimeout(ms: i64) std.Io.Timeout {
+    return .{
+        .duration = .{
+            .raw = std.Io.Duration.fromMilliseconds(ms),
+            .clock = .awake,
+        },
+    };
+}
+
 const BASE_URL = "https://edgebin.liujiacai.net";
 
 // -------------------------------------------------------------------------
@@ -60,7 +69,7 @@ pub fn main(init: std.process.Init) !void {
     {
         var res = try client.get(BASE_URL ++ "/ip")
             .headers(&.{.{ .name = "Accept", .value = "application/json" }})
-            .timeout(15000)
+            .timeout(msTimeout(15000))
             .send(io);
         defer res.deinit();
 
@@ -92,7 +101,7 @@ pub fn main(init: std.process.Init) !void {
                 .{ .name = "X-Powered-By", .value = "zig-curl" },
             })
             .body("{\"message\": \"Hello from async-curl!\"}")
-            .timeout(15000)
+            .timeout(msTimeout(15000))
             .send(io);
         defer res.deinit();
 
@@ -114,7 +123,7 @@ pub fn main(init: std.process.Init) !void {
         const start_time = std.Io.Clock.awake.now(io);
 
         const result = client.get(BASE_URL ++ "/delay/3")
-            .timeout(1000) // 1 second timeout
+            .timeout(msTimeout(1000)) // 1 second timeout
             .send(io);
 
         const elapsed_ms = start_time.durationTo(std.Io.Clock.awake.now(io)).toMilliseconds();
@@ -139,7 +148,7 @@ pub fn main(init: std.process.Init) !void {
         // Bearer Authentication
         var auth_res = try client.get(BASE_URL ++ "/bearer")
             .headers(&.{.{ .name = "Authorization", .value = "Bearer secret-token-xyz-123" }})
-            .timeout(15000)
+            .timeout(msTimeout(15000))
             .send(io);
         defer auth_res.deinit();
 
@@ -153,7 +162,7 @@ pub fn main(init: std.process.Init) !void {
         // Redirect Tracking (Edgebin /redirect/2 redirects 2 times)
         var redir_res = try client.get(BASE_URL ++ "/redirect/2")
             .followLocation(true)
-            .timeout(15000)
+            .timeout(msTimeout(15000))
             .send(io);
         defer redir_res.deinit();
         const redir_body = try redir_res.bodyAlloc(allocator, 64 * 1024);
@@ -179,7 +188,7 @@ pub fn main(init: std.process.Init) !void {
 
         var res = try client.get(BASE_URL ++ "/headers")
             .configure(CustomConfig.hook)
-            .timeout(15000)
+            .timeout(msTimeout(15000))
             .send(io);
         defer res.deinit();
 
@@ -204,7 +213,7 @@ pub fn main(init: std.process.Init) !void {
                 defer c.allocator.free(url);
 
                 var r = c.get(url)
-                    .timeout(15000)
+                    .timeout(msTimeout(15000))
                     .send(i) catch |err| {
                     std.debug.print("    [Group] {s} failed: {any}\n", .{ path, err });
                     return;
@@ -245,7 +254,7 @@ pub fn main(init: std.process.Init) !void {
         const Tasks = struct {
             fn fastRequest(c: *Client, i: std.Io) u16 {
                 var r = c.get(BASE_URL ++ "/delay/1")
-                    .timeout(15000)
+                    .timeout(msTimeout(15000))
                     .send(i) catch return 0;
                 defer r.deinit();
                 return r.status_code;
@@ -253,7 +262,7 @@ pub fn main(init: std.process.Init) !void {
 
             fn slowRequest(c: *Client, i: std.Io) u16 {
                 var r = c.get(BASE_URL ++ "/delay/3")
-                    .timeout(15000)
+                    .timeout(msTimeout(15000))
                     .send(i) catch return 0;
                 defer r.deinit();
                 return r.status_code;
@@ -303,7 +312,7 @@ pub fn main(init: std.process.Init) !void {
                     defer c.allocator.free(url);
 
                     var r = c.get(url)
-                        .timeout(15000)
+                        .timeout(msTimeout(15000))
                         .send(i) catch continue;
                     defer r.deinit();
 
@@ -342,7 +351,7 @@ pub fn main(init: std.process.Init) !void {
         const Worker = struct {
             fn fetchIp(i: std.Io, c: *Client) anyerror!u16 {
                 var res = try c.get(BASE_URL ++ "/ip")
-                    .timeout(10000)
+                    .timeout(msTimeout(10000))
                     .send(i);
                 defer res.deinit();
                 return res.status_code;
@@ -369,7 +378,7 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("=== 10. Streaming Response Body with std.Io.Reader ===\n", .{});
     {
         var res = try client.get(BASE_URL ++ "/headers")
-            .timeout(10000)
+            .timeout(msTimeout(10000))
             .send(io);
         defer res.deinit();
 

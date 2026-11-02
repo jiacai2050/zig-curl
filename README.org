@@ -49,14 +49,15 @@ pub fn main(init: std.process.Init) !void {
     var client = try curl.Client.init(allocator, init.io, .{});
     defer client.deinit();
 
-    // 2. Fluent GET request
+    // 2. Fluent GET request with query params and timeout
     var res = try client.get("https://edgebin.liujiacai.net/ip")
+        .query(.{ .format = "json" })
         .headers(&.{.{ .name = "Accept", .value = "application/json" }})
-        .timeout(10000)
+        .timeout(.{ .duration = .{ .raw = std.Io.Duration.fromSeconds(10), .clock = .awake } })
         .send(init.io);
     defer res.deinit();
 
-    std.debug.print("Status: {d}\n", .{res.status_code});
+    std.debug.print("Status: {d} (success: {})\n", .{ res.status_code, res.isSuccess() });
 
     // 3. Strongly-typed JSON deserialization directly from response
     const IpGeo = struct { origin: []const u8, country: []const u8 };
@@ -64,10 +65,10 @@ pub fn main(init: std.process.Init) !void {
     defer parsed.deinit();
     std.debug.print("IP: {s}, Country: {s}\n", .{ parsed.value.origin, parsed.value.country });
 
-    // 4. Asynchronous POST with body
-    var post_res = try client.post("https://edgebin.liujiacai.net/anything")
-        .headers(&.{.{ .name = "Content-Type", .value = "application/json" }})
-        .body("{\"message\": \"hello zig-curl\"}")
+    // 4. Asynchronous POST with typed JSON body
+    const Payload = struct { message: []const u8 };
+    var post_res = try (try client.post("https://edgebin.liujiacai.net/anything")
+        .json(Payload{ .message = "hello zig-curl" }))
         .send(init.io);
     defer post_res.deinit();
 }

@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Request Ergonomics**:
+  - `RequestBuilder.json(payload: anytype)`: Serializes structs to JSON directly into request body, auto-setting `Content-Type: application/json`.
+  - `RequestBuilder.query(params: anytype)`: Appends query parameters from anonymous structs or `[]const QueryParam` slices with automatic libcurl URL escaping.
+  - `Response` status inspection helpers: `isSuccess()`, `isClientError()`, `isServerError()`, and `isError()`.
+  - Exported `QueryParam` in `src/root.zig`.
+
+### Changed
+
+- **`RequestBuilder.timeout`**: Now accepts `std.Io.Timeout` directly (`.none`, `.duration`, or `.deadline`) instead of raw integer milliseconds, aligning with Zig 0.17 standard I/O conventions.
+
 ## [0.6.0] - 2026-11-01
 
 ### Added

@@ -171,6 +171,11 @@ pub const HeaderEntry = struct {
     value: []const u8,
 };
 
+pub const QueryParam = struct {
+    name: []const u8,
+    value: []const u8,
+};
+
 /// An immutable header name-value view into response metadata.
 ///
 /// **Lifetime**: Valid ONLY until `res.deinit()` is called on the owning `Response`.
@@ -313,6 +318,26 @@ pub const Response = struct {
     pub fn reader(self: *Response) BodyReader {
         const stream = self.stream orelse @panic("Response.reader() called after deinit()");
         return BodyReader.init(stream, &self.reader_buf);
+    }
+
+    /// Returns true if the HTTP response status code is in the 2xx range (200..=299).
+    pub fn isSuccess(self: Response) bool {
+        return self.status_code >= 200 and self.status_code < 300;
+    }
+
+    /// Returns true if the HTTP response status code is in the 4xx range (400..=499).
+    pub fn isClientError(self: Response) bool {
+        return self.status_code >= 400 and self.status_code < 500;
+    }
+
+    /// Returns true if the HTTP response status code is in the 5xx range (500..=599).
+    pub fn isServerError(self: Response) bool {
+        return self.status_code >= 500 and self.status_code < 600;
+    }
+
+    /// Returns true if the HTTP response indicates an error (4xx or 5xx).
+    pub fn isError(self: Response) bool {
+        return self.status_code >= 400 and self.status_code < 600;
     }
 
     /// Retrieve a response header by name from the captured header snapshot.
@@ -459,6 +484,17 @@ pub const StreamContext = struct {
     ring_head: usize = 0,
     ring_count: usize = 0,
 
+    /// Dynamically allocated request payload (e.g. from `RequestBuilder.json()`).
+    /// libcurl requires the body pointer to remain valid throughout the entire transfer;
+    /// ownership is handed over from `RequestBuilder` into `StreamContext` on `send()`,
+    /// and freed when this stream is reset, recycled, or destroyed.
+    owned_body: ?[]const u8 = null,
+    /// Dynamically allocated URL (e.g. from `RequestBuilder.query()`).
+    /// libcurl requires the URL string to remain valid throughout the entire transfer;
+    /// ownership is handed over from `RequestBuilder` into `StreamContext` on `send()`,
+    /// and freed when this stream is reset, recycled, or destroyed.
+    owned_url: ?[:0]const u8 = null,
+
     fn reset(
         self: *StreamContext,
         client: *Self,
@@ -480,6 +516,14 @@ pub const StreamContext = struct {
         if (self.c_headers) |h| {
             c.curl_slist_free_all(h);
             self.c_headers = null;
+        }
+        if (self.owned_body) |b| {
+            self.allocator.free(b);
+            self.owned_body = null;
+        }
+        if (self.owned_url) |u| {
+            self.allocator.free(u);
+            self.owned_url = null;
         }
         self.next = null;
         self.active_prev = null;
@@ -573,6 +617,14 @@ pub const StreamContext = struct {
         if (self.c_headers) |h| {
             c.curl_slist_free_all(h);
             self.c_headers = null;
+        }
+        if (self.owned_body) |b| {
+            allocator.free(b);
+            self.owned_body = null;
+        }
+        if (self.owned_url) |u| {
+            allocator.free(u);
+            self.owned_url = null;
         }
         self.header_bytes.deinit(allocator);
         self.headers.deinit(allocator);
@@ -839,6 +891,14 @@ fn releaseHandle(self: *Self, stream: *StreamContext, is_tainted: bool) void {
     if (stream.c_headers) |h| {
         c.curl_slist_free_all(h);
         stream.c_headers = null;
+    }
+    if (stream.owned_body) |b| {
+        self.allocator.free(b);
+        stream.owned_body = null;
+    }
+    if (stream.owned_url) |u| {
+        self.allocator.free(u);
+        stream.owned_url = null;
     }
 
     if (is_tainted) {
@@ -1245,13 +1305,20 @@ pub const RequestBuilder = struct {
     body_data: ?[]const u8 = null,
     body_reader: ?*Reader = null,
     body_reader_size: ?usize = null,
-    timeout_ms: ?usize = null,
+    request_timeout: ?std.Io.Timeout = null,
     max_redirects: ?u32 = null,
     http_version: ?Easy.HttpVersion = null,
     follow_location: bool = true,
     unix_socket_path: ?[:0]const u8 = null,
     is_tainted: bool = false,
     config_hook: ?*const fn (*Easy) anyerror!void = null,
+    /// Holds ownership of a heap-allocated JSON payload produced by `.json()`.
+    /// Transferred to `StreamContext.owned_body` inside `send()`.
+    owned_body: ?[]const u8 = null,
+    /// Holds ownership of a heap-allocated query-encoded URL produced by `.query()`.
+    /// Transferred to `StreamContext.owned_url` inside `send()`.
+    owned_url: ?[:0]const u8 = null,
+    has_json_body: bool = false,
 
     fn init(client: *Self, method: Easy.Method, url: [:0]const u8) RequestBuilder {
         return .{
@@ -1326,9 +1393,11 @@ pub const RequestBuilder = struct {
         return s;
     }
 
-    pub fn timeout(self: RequestBuilder, ms: usize) RequestBuilder {
+    /// Sets the request timeout using `std.Io.Timeout`.
+    /// When evaluated during `send(io)`, the timeout is resolved relative to `io`'s current clock into milliseconds.
+    pub fn timeout(self: RequestBuilder, t: std.Io.Timeout) RequestBuilder {
         var s = self;
-        s.timeout_ms = ms;
+        s.request_timeout = t;
         return s;
     }
 
@@ -1348,6 +1417,72 @@ pub const RequestBuilder = struct {
         var s = self;
         s.unix_socket_path = path;
         s.is_tainted = true; // Unix domain sockets alter connection routing
+        return s;
+    }
+
+    /// Serializes `payload` to JSON, sets it as the request body, and ensures `Content-Type: application/json` is sent.
+    /// Memory allocated for the JSON string is owned by the request and automatically released when the transfer completes.
+    pub fn json(self: RequestBuilder, payload: anytype) !RequestBuilder {
+        var s = self;
+        if (s.owned_body) |b| {
+            s.client.allocator.free(b);
+            s.owned_body = null;
+        }
+        const json_str = try std.fmt.allocPrint(s.client.allocator, "{f}", .{std.json.fmt(payload, .{})});
+        s.body_data = json_str;
+        s.owned_body = json_str;
+        s.body_reader = null;
+        s.body_reader_size = null;
+        s.has_json_body = true;
+        return s;
+    }
+
+    /// Appends query parameters to the URL.
+    /// `params` can be either a slice of `QueryParam` / key-value structs, or an anonymous struct whose fields are key-value pairs.
+    /// Keys and values are automatically URL-encoded using libcurl.
+    /// The newly constructed URL is owned by the request and automatically released when the transfer completes.
+    pub fn query(self: RequestBuilder, params: anytype) !RequestBuilder {
+        var s = self;
+        const T = @TypeOf(params);
+        const type_info = @typeInfo(T);
+
+        var list: std.ArrayList(u8) = .empty;
+        defer list.deinit(s.client.allocator);
+
+        try list.appendSlice(s.client.allocator, s.url);
+
+        var has_query_mark = std.mem.indexOfScalar(u8, s.url, '?') != null;
+
+        switch (type_info) {
+            .pointer => |ptr_info| {
+                switch (ptr_info.size) {
+                    .slice => {
+                        for (params) |param| {
+                            const name_str = param.name;
+                            const val_str = param.value;
+                            try appendEncodedParam(s.client.allocator, &list, name_str, val_str, &has_query_mark);
+                        }
+                    },
+                    else => @compileError("query() expects a slice of query params or a struct"),
+                }
+            },
+            .@"struct" => |struct_info| {
+                inline for (struct_info.field_names) |field_name| {
+                    const raw_val = @field(params, field_name);
+                    const val_str = try formatQueryValAlloc(s.client.allocator, raw_val);
+                    defer s.client.allocator.free(val_str);
+                    try appendEncodedParam(s.client.allocator, &list, field_name, val_str, &has_query_mark);
+                }
+            },
+            else => @compileError("query() expects a slice of query params or a struct"),
+        }
+
+        const new_url = try s.client.allocator.dupeSentinel(u8, list.items, 0);
+        if (s.owned_url) |u| {
+            s.client.allocator.free(u);
+        }
+        s.owned_url = new_url;
+        s.url = new_url;
         return s;
     }
 
@@ -1406,8 +1541,19 @@ pub const RequestBuilder = struct {
             try easy.setMaxRedirects(redirs);
         }
 
-        if (self.timeout_ms) |ms| {
-            easy.timeout_ms = ms;
+        if (self.request_timeout) |to| {
+            if (to.toDurationFromNow(io)) |d| {
+                const ms = d.raw.toMilliseconds();
+                if (ms > 0) {
+                    easy.timeout_ms = @intCast(ms);
+                } else {
+                    // Timeout has already expired prior to dispatch
+                    easy.timeout_ms = 1;
+                }
+            } else {
+                // .none explicitly disables timeout
+                easy.timeout_ms = 0;
+            }
         }
         if (self.http_version) |ver| {
             try easy.setHttpVersion(ver);
@@ -1437,11 +1583,15 @@ pub const RequestBuilder = struct {
         }
 
         // Custom headers
-        const ch = try buildHeaderSlist(client.allocator, self.custom_headers);
+        const ch = try buildHeaderSlist(client.allocator, self.custom_headers, self.has_json_body);
         stream.c_headers = ch;
         if (ch) |headers_list| {
             try easy.setHeadersC(headers_list);
         }
+
+        // Transfer ownership of allocated body and URL buffers to stream so they are freed upon reset or destroy.
+        stream.owned_body = self.owned_body;
+        stream.owned_url = self.owned_url;
 
         try easy.setCommonOpts();
 
@@ -1512,10 +1662,63 @@ pub const RequestBuilder = struct {
     }
 };
 
-fn buildHeaderSlist(allocator: Allocator, entries: []const HeaderEntry) !?*c.struct_curl_slist {
-    if (entries.len == 0) return null;
+fn appendEncodedParam(
+    allocator: Allocator,
+    list: *std.ArrayList(u8),
+    key: []const u8,
+    val: []const u8,
+    has_query_mark: *bool,
+) !void {
+    if (!has_query_mark.*) {
+        try list.append(allocator, '?');
+        has_query_mark.* = true;
+    } else {
+        try list.append(allocator, '&');
+    }
+
+    const enc_key = c.curl_easy_escape(null, key.ptr, @intCast(key.len)) orelse return error.OutOfMemory;
+    defer c.curl_free(enc_key);
+    try list.appendSlice(allocator, std.mem.sliceTo(enc_key, 0));
+
+    try list.append(allocator, '=');
+
+    const enc_val = c.curl_easy_escape(null, val.ptr, @intCast(val.len)) orelse return error.OutOfMemory;
+    defer c.curl_free(enc_val);
+    try list.appendSlice(allocator, std.mem.sliceTo(enc_val, 0));
+}
+
+fn formatQueryValAlloc(allocator: Allocator, val: anytype) ![]u8 {
+    const ValType = @TypeOf(val);
+    const val_type_info = @typeInfo(ValType);
+    if (val_type_info == .pointer) {
+        if (val_type_info.pointer.size == .slice and val_type_info.pointer.child == u8) {
+            return allocator.dupe(u8, val);
+        }
+        if (val_type_info.pointer.size == .one and @typeInfo(val_type_info.pointer.child) == .array and @typeInfo(val_type_info.pointer.child).array.child == u8) {
+            return allocator.dupe(u8, val);
+        }
+    }
+    return std.fmt.allocPrint(allocator, "{any}", .{val});
+}
+
+fn buildHeaderSlist(allocator: Allocator, entries: []const HeaderEntry, has_json_body: bool) !?*c.struct_curl_slist {
+    var has_content_type = false;
+    for (entries) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "Content-Type")) {
+            has_content_type = true;
+            break;
+        }
+    }
+
+    if (entries.len == 0 and (!has_json_body or has_content_type)) return null;
+
     var ch: ?*c.struct_curl_slist = null;
     errdefer if (ch) |h| c.curl_slist_free_all(h);
+
+    if (has_json_body and !has_content_type) {
+        ch = c.curl_slist_append(ch, "Content-Type: application/json") orelse return error.OutOfMemory;
+    }
+
     for (entries) |h| {
         // Use stack buffer for common headers to eliminate heap allocation.
         // Falls back to allocator only if the header line exceeds the stack capacity.
@@ -1534,6 +1737,15 @@ fn buildHeaderSlist(allocator: Allocator, entries: []const HeaderEntry) !?*c.str
 // -------------------------------------------------------------------------
 // Unit Tests
 // -------------------------------------------------------------------------
+
+fn testTimeout(ms: i64) std.Io.Timeout {
+    return .{
+        .duration = .{
+            .raw = std.Io.Duration.fromMilliseconds(ms),
+            .clock = .awake,
+        },
+    };
+}
 
 test "Client: init and deinit lifecycle" {
     // Verifies that Client and its background worker thread can be started
@@ -1596,12 +1808,12 @@ test "Client: RequestBuilder configuration chaining" {
             .{ .name = "Accept", .value = "text/html" },
             .{ .name = "User-Agent", .value = "zig-curl" },
         })
-        .timeout(3000)
+        .timeout(testTimeout(3000))
         .version(.http2)
         .followLocation(false);
 
     assert(req1.is_tainted == false);
-    assert(req1.timeout_ms.? == 3000);
+    assert(req1.request_timeout.?.toDurationFromNow(io).?.raw.toMilliseconds() > 0);
     assert(req1.http_version.? == .http2);
     assert(req1.follow_location == false);
     assert(req1.custom_headers.len == 2);
@@ -1768,7 +1980,7 @@ test "Client: transfer failure does not crash on body double free (offline local
 
     // In unified streaming model, send() succeeds as soon as 200 OK headers arrive,
     // and transfer failure is safely reported during body read without double-free/leak.
-    var res = try client.get(url).timeout(3000).send(io);
+    var res = try client.get(url).timeout(testTimeout(3000)).send(io);
     defer res.deinit();
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
 
@@ -1791,7 +2003,7 @@ test "Client: Response has no dangling easy_handle and pool reuse works (offline
 
     var res = try client.get(url)
         .headers(&.{.{ .name = "X-Test", .value = "1" }})
-        .timeout(3000)
+        .timeout(testTimeout(3000))
         .send(io);
 
     assert(res.status_code == 200);
@@ -1820,7 +2032,7 @@ test "Client: fluent chaining works seamlessly on rvalues" {
     var res = try client.post(url)
         .headers(&.{.{ .name = "Content-Type", .value = "text/plain" }})
         .body("ping")
-        .timeout(3000)
+        .timeout(testTimeout(3000))
         .send(io);
     defer res.deinit();
 
@@ -1843,7 +2055,7 @@ test "Client: HEAD request completes without waiting for body" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.head(url).timeout(3000).send(io);
+    var res = try client.head(url).timeout(testTimeout(3000)).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -1865,7 +2077,7 @@ test "Client: shutdown drain cleans up in-flight requests without hanging" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(3000).send(io);
+    var res = try client.get(url).timeout(testTimeout(3000)).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -1885,7 +2097,7 @@ test "Client: send reads entire body via reader" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(3000).send(io);
+    var res = try client.get(url).timeout(testTimeout(3000)).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -1911,7 +2123,7 @@ test "Client: send integrates with std.Io.Reader line delimiter" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(3000).send(io);
+    var res = try client.get(url).timeout(testTimeout(3000)).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -1939,7 +2151,7 @@ test "Client: send early deinit cancels in-flight transfer without leak" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(3000).send(io);
+    var res = try client.get(url).timeout(testTimeout(3000)).send(io);
     var reader = res.reader();
     var small_buf: [4]u8 = undefined;
     const n = try reader.read(&small_buf);
@@ -2067,7 +2279,7 @@ test "Client: send 1MiB body backpressure and unpause without deadlock" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(5000).send(io);
+    var res = try client.get(url).timeout(testTimeout(5000)).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -2109,9 +2321,9 @@ test "Client: send dual concurrent streams backpressure" {
     const url2 = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s2.port}, 0);
     defer allocator.free(url2);
 
-    var res1 = try client.get(url1).timeout(5000).send(io);
+    var res1 = try client.get(url1).timeout(testTimeout(5000)).send(io);
     defer res1.deinit();
-    var res2 = try client.get(url2).timeout(5000).send(io);
+    var res2 = try client.get(url2).timeout(testTimeout(5000)).send(io);
     defer res2.deinit();
 
     var r1 = res1.reader();
@@ -2165,7 +2377,7 @@ test "Client: send 1MiB early abort without memory leak" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(5000).send(io);
+    var res = try client.get(url).timeout(testTimeout(5000)).send(io);
     var reader = res.reader();
 
     var small_buf: [4096]u8 = undefined;
@@ -2189,7 +2401,7 @@ test "Client: send stall timeout detection" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(400).send(io);
+    var res = try client.get(url).timeout(testTimeout(400)).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -2219,7 +2431,7 @@ test "Client: send connection failure fails cleanly without UAF or double-free" 
     // Unix loopback stacks reject it immediately with a connection failure.
     const res = client.get("http://127.0.0.1:1/")
         .headers(&.{.{ .name = "X-Test", .value = "UAF-Check" }})
-        .timeout(1000)
+        .timeout(testTimeout(1000))
         .send(io);
 
     if (comptime builtin.os.tag == .windows) {
@@ -2238,7 +2450,7 @@ test "Client: send DNS failure fails cleanly without UAF or double-free" {
 
     const res = client.get("http://invalid.domain.that.does.not.exist.test/")
         .headers(&.{.{ .name = "X-Test", .value = "DNS-Check" }})
-        .timeout(1000)
+        .timeout(testTimeout(1000))
         .send(io);
 
     // Depending on environment/proxy setup, DNS failure can yield NameResolutionFailed or HttpConnectionClosed
@@ -2384,7 +2596,7 @@ test "Client: send 0-byte empty body returns EOF immediately" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(3000).send(io);
+    var res = try client.get(url).timeout(testTimeout(3000)).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -2413,7 +2625,7 @@ test "Client: send trickle read 1 byte per iteration with backpressure" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(5000).send(io);
+    var res = try client.get(url).timeout(testTimeout(5000)).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -2454,11 +2666,11 @@ test "Client: send max_concurrency semaphore acquisition and release" {
     try std.testing.expectEqual(@as(usize, 2), client.semaphore.?.permits);
 
     // Stream 1 acquires 1 permit -> 1 left
-    var res1 = try client.get(url).timeout(3000).send(io);
+    var res1 = try client.get(url).timeout(testTimeout(3000)).send(io);
     try std.testing.expectEqual(@as(usize, 1), client.semaphore.?.permits);
 
     // Stream 2 acquires 1 permit -> 0 left (exhausted)
-    var res2 = try client.get(url).timeout(3000).send(io);
+    var res2 = try client.get(url).timeout(testTimeout(3000)).send(io);
     try std.testing.expectEqual(@as(usize, 0), client.semaphore.?.permits);
 
     // Deinit stream 1: releases 1 permit back to semaphore immediately without waiting for driver
@@ -2492,7 +2704,7 @@ test "Client: max_concurrency=1 early deinit mid-stream releases permit immediat
     try std.testing.expectEqual(@as(usize, 1), client.semaphore.?.permits);
 
     // Request 1 acquires the only permit
-    var res1 = try client.get(url).timeout(5000).send(io);
+    var res1 = try client.get(url).timeout(testTimeout(5000)).send(io);
     try std.testing.expectEqual(@as(usize, 0), client.semaphore.?.permits);
 
     // Read only a small chunk so the transfer is still active in the background
@@ -2535,7 +2747,7 @@ test "Client: send redirect loop exceeds max redirects cleanly" {
     // Follows redirects but capped at 2, so loop will abort and return error
     const res = client.get(url)
         .configure(LimitHook.hook)
-        .timeout(3000)
+        .timeout(testTimeout(3000))
         .send(io);
 
     try std.testing.expectError(error.TooManyRedirects, res);
@@ -2563,7 +2775,7 @@ test "Client: getHeader and iterateHeaders on Response (offline local)" {
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(3000).send(io);
+    var res = try client.get(url).timeout(testTimeout(3000)).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -2634,7 +2846,7 @@ test "Client: many headers forcing allocation growth and chunked trailers (offli
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/trailers", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(3000).send(io);
+    var res = try client.get(url).timeout(testTimeout(3000)).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -2743,7 +2955,7 @@ test "Client: bodyReader streaming request upload (offline local)" {
 
     var res = try client.post(url)
         .bodyReader(&reader, payload.len)
-        .timeout(3000)
+        .timeout(testTimeout(3000))
         .send(io);
     defer res.deinit();
 
@@ -2793,7 +3005,7 @@ test "Client: bodyReader error propagation (offline local)" {
 
     const res = client.post(url)
         .bodyReader(&failing_reader, 100)
-        .timeout(3000)
+        .timeout(testTimeout(3000))
         .send(io);
 
     try std.testing.expectError(error.ReadFailed, res);
@@ -2816,7 +3028,7 @@ test "Client: maxRedirects builder method works (offline local)" {
     // Follows redirects but capped at 1 via fluent builder method
     const res = client.get(url)
         .maxRedirects(1)
-        .timeout(3000)
+        .timeout(testTimeout(3000))
         .send(io);
 
     try std.testing.expectError(error.TooManyRedirects, res);
@@ -2838,7 +3050,7 @@ test "Client: non-followed 3xx responses preserve headers (304 Not Modified & 30
         const url = try allocator.printSentinel("http://127.0.0.1:{d}/test304", .{s.port}, 0);
         defer allocator.free(url);
 
-        var res = try client.get(url).timeout(3000).send(io);
+        var res = try client.get(url).timeout(testTimeout(3000)).send(io);
         defer res.deinit();
 
         try std.testing.expectEqual(@as(u16, 304), res.status_code);
@@ -2860,7 +3072,7 @@ test "Client: non-followed 3xx responses preserve headers (304 Not Modified & 30
         const url = try allocator.printSentinel("http://127.0.0.1:{d}/test302", .{s.port}, 0);
         defer allocator.free(url);
 
-        var res = try client.get(url).timeout(3000).send(io);
+        var res = try client.get(url).timeout(testTimeout(3000)).send(io);
         defer res.deinit();
 
         try std.testing.expectEqual(@as(u16, 302), res.status_code);
@@ -2930,7 +3142,7 @@ test "Client: followed redirect clears intermediate headers and preserves final 
     const url = try allocator.printSentinel("http://127.0.0.1:{d}/redirect", .{s.port}, 0);
     defer allocator.free(url);
 
-    var res = try client.get(url).timeout(3000).send(io);
+    var res = try client.get(url).timeout(testTimeout(3000)).send(io);
     defer res.deinit();
 
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
@@ -2965,7 +3177,7 @@ test "Client: PUT upload with bodyReader and chunked POST without content length
 
         var res = try client.put(url)
             .bodyReader(&r, put_payload.len)
-            .timeout(3000)
+            .timeout(testTimeout(3000))
             .send(io);
         defer res.deinit();
 
@@ -2991,7 +3203,7 @@ test "Client: PUT upload with bodyReader and chunked POST without content length
 
         var res = try client.post(url)
             .bodyReader(&r, null)
-            .timeout(3000)
+            .timeout(testTimeout(3000))
             .send(io);
         defer res.deinit();
 
@@ -3053,8 +3265,215 @@ test "Client: bodyReader 307 redirect fails with UploadNotRewindable (offline lo
     const res = client.post(url)
         .bodyReader(&r, payload.len)
         .followLocation(true)
-        .timeout(3000)
+        .timeout(testTimeout(3000))
         .send(io);
 
     try std.testing.expectError(error.UploadNotRewindable, res);
+}
+
+fn startInspectServer(io: std.Io) !struct { thread: std.Thread, port: u16 } {
+    const addr = std.Io.net.IpAddress{ .ip4 = std.Io.net.Ip4Address.loopback(0) };
+    var server = try addr.listen(io, .{ .mode = .stream });
+    const port = server.socket.address.getPort();
+
+    const Context = struct {
+        server: std.Io.net.Server,
+        io: std.Io,
+
+        fn run(ctx: @This()) void {
+            var s = ctx.server;
+            defer s.deinit(ctx.io);
+
+            const stream = s.accept(ctx.io) catch return;
+            defer stream.close(ctx.io);
+
+            setTestReceiveTimeout(stream);
+
+            var read_buf: [4096]u8 = undefined;
+            var reader = std.Io.net.Stream.Reader.init(stream, ctx.io, &read_buf);
+            var write_buf: [4096]u8 = undefined;
+            var writer = std.Io.net.Stream.Writer.init(stream, ctx.io, &write_buf);
+
+            var http_server = std.http.Server.init(&reader.interface, &writer.interface);
+            var req = http_server.receiveHead() catch return;
+
+            var body_buf: [4096]u8 = undefined;
+            var server_req_reader_buf: [1024]u8 = undefined;
+            var total_body_read: usize = 0;
+
+            var target_buf: [256]u8 = undefined;
+            const target_len = @min(req.head.target.len, target_buf.len);
+            @memcpy(target_buf[0..target_len], req.head.target[0..target_len]);
+            const target_slice = target_buf[0..target_len];
+
+            var ct_header_buf: [128]u8 = undefined;
+            var ct_header: []const u8 = "none";
+            var iter = req.iterateHeaders();
+            while (iter.next()) |h| {
+                if (std.ascii.eqlIgnoreCase(h.name, "Content-Type")) {
+                    const copy_len = @min(h.value.len, ct_header_buf.len);
+                    @memcpy(ct_header_buf[0..copy_len], h.value[0..copy_len]);
+                    ct_header = ct_header_buf[0..copy_len];
+                    break;
+                }
+            }
+
+            if (req.head.method == .POST or req.head.method == .PUT) {
+                if (req.readerExpectContinue(&server_req_reader_buf)) |req_r| {
+                    while (true) {
+                        const n = req_r.readSliceShort(body_buf[total_body_read..]) catch break;
+                        if (n == 0) break;
+                        total_body_read += n;
+                        if (total_body_read == body_buf.len) break;
+                    }
+                } else |_| {}
+            }
+
+            var header_buf: [512]u8 = undefined;
+            var header_writer = std.Io.Writer.fixed(&header_buf);
+            header_writer.print("HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nX-Received-Target: {s}\r\nX-Received-Content-Type: {s}\r\n\r\n", .{
+                total_body_read,
+                target_slice,
+                ct_header,
+            }) catch return;
+
+            writer.interface.writeAll(header_writer.buffered()) catch return;
+            if (total_body_read > 0) {
+                writer.interface.writeAll(body_buf[0..total_body_read]) catch return;
+            }
+            writer.interface.flush() catch return;
+        }
+    };
+
+    const thread = try std.Thread.spawn(.{}, Context.run, .{Context{
+        .server = server,
+        .io = io,
+    }});
+    return .{ .thread = thread, .port = port };
+}
+
+test "Client: RequestBuilder json serialization and Content-Type injection (offline local)" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const s = try startInspectServer(io);
+    defer s.thread.join();
+
+    var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+    defer client.deinit();
+
+    const url = try allocator.printSentinel("http://127.0.0.1:{d}/api/user", .{s.port}, 0);
+    defer allocator.free(url);
+
+    const User = struct {
+        name: []const u8,
+        age: u32,
+    };
+
+    var req = try client.post(url)
+        .json(User{ .name = "Alice", .age = 30 });
+    var res = try req.timeout(testTimeout(3000)).send(io);
+    defer res.deinit();
+
+    try std.testing.expectEqual(@as(u16, 200), res.status_code);
+    try std.testing.expect(res.isSuccess());
+    try std.testing.expect(!res.isError());
+
+    // Verify Content-Type was automatically injected
+    const ct_hdr = res.getHeader("X-Received-Content-Type") orelse return error.HeaderMissing;
+    try std.testing.expectEqualStrings("application/json", ct_hdr.get());
+
+    // Verify body payload
+    const body = try res.bodyAlloc(allocator, 1024);
+    defer allocator.free(body);
+    try std.testing.expectEqualStrings("{\"name\":\"Alice\",\"age\":30}", body);
+}
+
+test "Client: RequestBuilder query params with struct and slice (offline local)" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    // 1. Test query with anonymous struct
+    {
+        const s = try startInspectServer(io);
+        defer s.thread.join();
+
+        var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+        defer client.deinit();
+
+        const url = try allocator.printSentinel("http://127.0.0.1:{d}/search", .{s.port}, 0);
+        defer allocator.free(url);
+
+        var req = try client.get(url)
+            .query(.{ .q = "zig & curl", .page = 2 });
+        var res = try req.timeout(testTimeout(3000)).send(io);
+        defer res.deinit();
+
+        try std.testing.expectEqual(@as(u16, 200), res.status_code);
+        try std.testing.expect(res.isSuccess());
+
+        const target_hdr = res.getHeader("X-Received-Target") orelse return error.HeaderMissing;
+        try std.testing.expectEqualStrings("/search?q=zig%20%26%20curl&page=2", target_hdr.get());
+    }
+
+    // 2. Test query with slice of QueryParam on an existing query URL
+    {
+        const s = try startInspectServer(io);
+        defer s.thread.join();
+
+        var client = try Self.init(allocator, io, .{ .load_ca_bundle = false });
+        defer client.deinit();
+
+        const url = try allocator.printSentinel("http://127.0.0.1:{d}/filter?initial=true", .{s.port}, 0);
+        defer allocator.free(url);
+
+        const params: []const QueryParam = &.{
+            .{ .name = "tag", .value = "async" },
+            .{ .name = "sort", .value = "desc" },
+        };
+
+        var req = try client.get(url)
+            .query(params);
+        var res = try req.timeout(testTimeout(3000)).send(io);
+        defer res.deinit();
+
+        try std.testing.expectEqual(@as(u16, 200), res.status_code);
+        try std.testing.expect(res.isSuccess());
+
+        const target_hdr = res.getHeader("X-Received-Target") orelse return error.HeaderMissing;
+        try std.testing.expectEqualStrings("/filter?initial=true&tag=async&sort=desc", target_hdr.get());
+    }
+}
+
+test "Client: Response status code helpers" {
+    const dummy_response = struct {
+        fn make(code: u16) Response {
+            return .{
+                .client = undefined,
+                .status_code = code,
+                .stream = null,
+            };
+        }
+    }.make;
+
+    const r200 = dummy_response(200);
+    try std.testing.expect(r200.isSuccess());
+    try std.testing.expect(!r200.isClientError());
+    try std.testing.expect(!r200.isServerError());
+    try std.testing.expect(!r200.isError());
+
+    const r204 = dummy_response(204);
+    try std.testing.expect(r204.isSuccess());
+
+    const r404 = dummy_response(404);
+    try std.testing.expect(!r404.isSuccess());
+    try std.testing.expect(r404.isClientError());
+    try std.testing.expect(!r404.isServerError());
+    try std.testing.expect(r404.isError());
+
+    const r500 = dummy_response(500);
+    try std.testing.expect(!r500.isSuccess());
+    try std.testing.expect(!r500.isClientError());
+    try std.testing.expect(r500.isServerError());
+    try std.testing.expect(r500.isError());
 }
